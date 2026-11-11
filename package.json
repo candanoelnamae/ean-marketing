@@ -1,0 +1,21 @@
+{
+  "name": "ean-marketing",
+  "version": "1.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "expo": "~52.0.0",
+    "expo-image-picker": "~16.0.6",
+    "expo-status-bar": "~2.0.1",
+    "react": "18.3.1",
+    "react-native": "0.76.5"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2"
+  }
+}
