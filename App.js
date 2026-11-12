@@ -41,7 +41,7 @@ export default function App() {
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [customerForm, setCustomerForm] = useState({name:'', phone:'', email:'', address:'', notes:''});
   const [search, setSearch] = useState('');
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [selected, setSelected] = useState(null);
   const [quantity, setQuantity] = useState('1');
@@ -93,8 +93,18 @@ export default function App() {
   }
 
   async function signIn() {
-    const {error} = await supabase.auth.signInWithPassword({email:email.trim(), password});
-    if (error) Alert.alert('Login failed', error.message);
+    const {data, error} = await supabase.functions.invoke('login-with-username', {
+      body: { username: username.trim(), password }
+    });
+    if (error || !data?.session) {
+      Alert.alert('Login failed', error?.message || data?.error || 'Invalid username or password.');
+      return;
+    }
+    const {error: sessionError} = await supabase.auth.setSession({
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token
+    });
+    if (sessionError) Alert.alert('Login failed', sessionError.message);
   }
   async function signOut() { await supabase.auth.signOut(); }
 
@@ -258,7 +268,7 @@ export default function App() {
 
   if (!supabaseConfigured) return <SafeAreaView style={styles.center}><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.note}>Setup is not complete yet. Add your Supabase URL and publishable key to the app environment before running it.</Text></SafeAreaView>;
   if (loading) return <View style={styles.center}><ActivityIndicator size="large" /><Text>Loading EAN Marketing…</Text></View>;
-  if (!session) return <SafeAreaView style={styles.center}><StatusBar style="dark"/><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>Sales & Inventory</Text><TextInput style={styles.input} placeholder="Email address" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail}/><TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword}/><TouchableOpacity style={styles.primary} onPress={signIn}><Text style={styles.primaryText}>Sign in</Text></TouchableOpacity></SafeAreaView>;
+  if (!session) return <SafeAreaView style={styles.center}><StatusBar style="dark"/><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>Sales & Inventory</Text><TextInput style={styles.input} placeholder="Username" autoCapitalize="none" value={username} onChangeText={setUsername}/><TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword}/><TouchableOpacity style={styles.primary} onPress={signIn}><Text style={styles.primaryText}>Sign in</Text></TouchableOpacity></SafeAreaView>;
   if (!profile) return <SafeAreaView style={styles.center}><Text>Profile not found. Please contact your administrator.</Text><TouchableOpacity onPress={signOut}><Text style={styles.link}>Sign out</Text></TouchableOpacity></SafeAreaView>;
 
   const filtered = products.filter(p => [p.name,p.sku,p.category].join(' ').toLowerCase().includes(search.toLowerCase()));
