@@ -168,7 +168,7 @@ export default function App() {
     if (!invoiceItems.length) return Alert.alert('Add products', 'Add at least one product to the invoice.');
     const discount = Number(invoiceDiscount || 0), paid = Number(invoicePaid || 0);
     if (!Number.isFinite(discount) || discount < 0 || !Number.isFinite(paid) || paid < 0) return Alert.alert('Check amounts', 'Enter valid discount and payment amounts.');
-    if (invoiceDueDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(invoiceDueDate)) return Alert.alert('Invalid due date', 'Use YYYY-MM-DD, for example 2026-12-31.');
+    if (invoiceDueDate && !/^\d{4}-\d{2}-\d{2}$/.test(invoiceDueDate)) return Alert.alert('Invalid due date', 'Use YYYY-MM-DD, for example 2026-12-31.');
     const {error} = await supabase.rpc('create_invoice', {p_customer_id:invoiceCustomer.id, p_items:invoiceItems.map(x=>({product_id:x.product_id, quantity:x.quantity})), p_discount:discount, p_amount_paid:paid, p_due_date:invoiceDueDate || null, p_notes:invoiceNotes || null});
     if (error) return Alert.alert('Invoice not created', error.message);
     setInvoiceModal(false); refresh(); Alert.alert('Invoice created', 'The invoice was saved and stock was updated.');
