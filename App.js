@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Image, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as Print from 'expo-print';
+import Svg, { Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase, supabaseConfigured } from './src/supabase';
 
@@ -34,6 +36,16 @@ export default function App() {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('CASH');
   const [paymentReference, setPaymentReference] = useState('');
+  const [signaturePath, setSignaturePath] = useState('');
+  const [signatureDrawing, setSignatureDrawing] = useState(false);
+  const [paymentScreen, setPaymentScreen] = useState(false);
+  const [cashCounts, setCashCounts] = useState({1000:'0',500:'0',200:'0',100:'0',50:'0',20:'0',10:'0',5:'0',1:'0',0.25:'0'});
+  const [cashReceived, setCashReceived] = useState('');
+  const [gcashSenderName, setGcashSenderName] = useState('');
+  const [gcashSenderNumber, setGcashSenderNumber] = useState('');
+  const [gcashReceiverNumber, setGcashReceiverNumber] = useState('');
+  const [gcashReference, setGcashReference] = useState('');
+  const [paymentBusy, setPaymentBusy] = useState(false);
   const [vendorSearch, setVendorSearch] = useState('');
   const [vendorModal, setVendorModal] = useState(false);
   const [editingVendor, setEditingVendor] = useState(null);
@@ -84,7 +96,7 @@ export default function App() {
     if (!s.error) setSales(s.data || []);
     const c = await supabase.from('customers').select('*').order('name');
     if (!c.error) setCustomers(c.data || []);
-    const inv = await supabase.from('invoices').select('*, customers(name)').order('created_at', {ascending:false}).limit(100);
+    const inv = await supabase.from('invoices').select('*, customers(name,address)').order('created_at', {ascending:false}).limit(100);
     if (!inv.error) setInvoices(inv.data || []);
     if (isAdmin) {
       const v = await supabase.from('vendors').select('*').order('name');
@@ -185,12 +197,12 @@ export default function App() {
     if (error) return Alert.alert('Invoice not created', error.message);
     setInvoiceModal(false); setInvoiceCustomerSearch(''); setInvoiceProductSearch('');
     await refresh();
-    const {data: savedInvoice, error: invoiceError} = await supabase.from('invoices').select('*, customers(name)').eq('id', invoiceId).single();
+    const {data: savedInvoice, error: invoiceError} = await supabase.from('invoices').select('*, customers(name,address)').eq('id', invoiceId).single();
     if (invoiceError || !savedInvoice) return Alert.alert('Invoice saved', 'The invoice was saved, but its preview could not be opened.');
     await openInvoice(savedInvoice);
   }
   async function openInvoice(item) {
-    setInvoiceDetail(item); setPaymentAmount(''); setPaymentMethod('CASH'); setPaymentReference('');
+    setInvoiceDetail(item); setPaymentAmount(''); setPaymentMethod('CASH'); setPaymentReference(''); setSignaturePath(''); setPaymentScreen(false);
     const [lines, pays] = await Promise.all([
       supabase.from('invoice_items').select('*').eq('invoice_id', item.id).order('id'),
       supabase.from('payments').select('*').eq('invoice_id', item.id).order('created_at', {ascending:false})
@@ -199,13 +211,65 @@ export default function App() {
     if (pays.error) Alert.alert('Could not load payment history', pays.error.message);
     setInvoiceLines(lines.data || []); setInvoicePayments(pays.data || []);
   }
+  async function confirmInvoice() {
+    if (!invoiceDetail) return;
+    if (!signaturePath.trim()) return Alert.alert('Customer signature needed', 'Ask the customer to sign in the signature box first.');
+    const {error} = await supabase.from('invoices').update({customer_signature:signaturePath, confirmed_at:new Date().toISOString(), confirmed_by:session.user.id}).eq('id', invoiceDetail.id);
+    if (error) return Alert.alert('Could not confirm invoice', error.message);
+    const {data} = await supabase.from('invoices').select('*, customers(name,address)').eq('id', invoiceDetail.id).single();
+    if (data) setInvoiceDetail(data);
+    Alert.alert('Invoice confirmed', 'The customer signature and confirmation have been saved.');
+  }
+  function htmlEscape(value) {
+    return String(value ?? '').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+  }
+  async function printInvoice() {
+    if (!invoiceDetail?.confirmed_at || !invoiceDetail?.customer_signature) return Alert.alert('Confirmation required', 'Confirm the invoice with the customer signature before printing.');
+    const rows = invoiceLines.map(x => '<tr><td>'+htmlEscape(x.product_name)+'</td><td>'+htmlEscape(x.quantity)+'</td><td>'+money(Number(x.line_total||0)/Math.max(1,Number(x.quantity||1)))+'</td><td>'+money(x.line_total)+'</td></tr>').join('');
+    const html = '<html><body style="font-family:Arial;padding:28px"><h2>EAN Marketing</h2><h3>INVOICE '+htmlEscape(invoiceDetail.invoice_number)+'</h3><p><b>Customer:</b> '+htmlEscape(invoiceDetail.customers?.name)+'<br/><b>Address:</b> '+htmlEscape(invoiceDetail.customers?.address)+'</p><table width="100%" border="1" cellspacing="0" cellpadding="7"><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr>'+rows+'</table><p>Subtotal: '+money(invoiceDetail.subtotal ?? (Number(invoiceDetail.total||0)+Number(invoiceDetail.discount||0)))+'<br/>Discount: '+money(invoiceDetail.discount)+'<br/><b>Total: '+money(invoiceDetail.total)+'</b></p><p>Prepared by: '+htmlEscape(profile.full_name||profile.role)+'<br/>Invoice date: '+new Date(invoiceDetail.created_at).toLocaleDateString()+'</p><p>Customer signature:<br/><img style="width:260px;height:90px;object-fit:contain;border-bottom:1px solid #333" src="data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 180"><path d="'+invoiceDetail.customer_signature+'" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>')+'"/></p></body></html>';
+    try {
+      await Print.printAsync({html});
+      const {error} = await supabase.from('invoices').update({printed_at:new Date().toISOString()}).eq('id',invoiceDetail.id);
+      if (error) Alert.alert('Printed, but status not saved', error.message);
+      else setInvoiceDetail(old=>({...old,printed_at:new Date().toISOString()}));
+    } catch (e) { Alert.alert('Print failed', e.message || 'Could not open the print dialog.'); }
+  }
+  function openPaymentScreen() {
+    setPaymentMethod('CASH'); setCashCounts({1000:'0',500:'0',200:'0',100:'0',50:'0',20:'0',10:'0',5:'0',1:'0',0.25:'0'});
+    setCashReceived(''); setGcashSenderName(''); setGcashSenderNumber(''); setGcashReceiverNumber(''); setGcashReference('');
+    setPaymentScreen(true);
+  }
+  async function submitInvoicePayment() {
+    if (paymentBusy) return;
+    const balance = Number(invoiceDetail?.balance || 0);
+    const received = paymentMethod === 'CASH' ? Number(cashReceived || 0) : Number(paymentAmount || 0);
+    if (!Number.isFinite(received) || received <= 0) return Alert.alert('Invalid payment','Enter a valid amount received.');
+    if (paymentMethod === 'GCASH' && received !== balance) return Alert.alert('Check GCash amount','For GCash, enter the exact outstanding balance.');
+    if (received < balance) return Alert.alert('Kulang ang payment','The amount received is less than the invoice balance.');
+    if (paymentMethod === 'GCASH' && (!gcashSenderName.trim() || !gcashSenderNumber.trim() || !gcashReceiverNumber.trim() || !gcashReference.trim())) return Alert.alert('Missing GCash details','Complete the sender name, sender number, receiver number, and reference number.');
+    setPaymentBusy(true);
+    try {
+      const {data: paymentId, error} = await supabase.rpc('record_invoice_payment', {p_invoice_id:invoiceDetail.id, p_amount:balance, p_payment_method:paymentMethod, p_reference_number:paymentMethod==='GCASH'?gcashReference.trim():null});
+      if (error) throw error;
+      const details = paymentMethod === 'CASH'
+        ? {cash_denominations:cashCounts, cash_received:received, cash_change:Math.max(0,received-balance)}
+        : {gcash_sender_name:gcashSenderName.trim(),gcash_sender_number:gcashSenderNumber.trim(),gcash_receiver_number:gcashReceiverNumber.trim()};
+      const {error: detailError} = await supabase.from('payments').update(details).eq('id',paymentId);
+      if (detailError) throw detailError;
+      const {data} = await supabase.from('invoices').select('*, customers(name,address)').eq('id',invoiceDetail.id).single();
+      if (data) await openInvoice(data);
+      setPaymentScreen(false); refresh();
+      Alert.alert('Payment recorded', paymentMethod==='CASH' && received>balance ? 'Payment accepted. Change: '+money(received-balance) : 'The invoice payment has been saved.');
+    } catch (e) { Alert.alert('Payment not recorded', e.message || 'Please try again.'); }
+    finally { setPaymentBusy(false); }
+  }
   async function saveInvoicePayment() {
     const amount = Number(paymentAmount);
     if (!Number.isFinite(amount) || amount <= 0) return Alert.alert('Invalid payment', 'Enter a payment amount greater than zero.');
     const {error} = await supabase.rpc('record_invoice_payment', {p_invoice_id:invoiceDetail.id, p_amount:amount, p_payment_method:paymentMethod, p_reference_number:paymentReference || null});
     if (error) return Alert.alert('Payment not recorded', error.message);
     setPaymentAmount(''); refresh();
-    const {data} = await supabase.from('invoices').select('*, customers(name)').eq('id', invoiceDetail.id).single();
+    const {data} = await supabase.from('invoices').select('*, customers(name,address)').eq('id', invoiceDetail.id).single();
     if (data) await openInvoice(data);
     Alert.alert('Payment recorded', 'The invoice balance has been updated.');
   }
@@ -295,7 +359,41 @@ export default function App() {
     {tab==='Expenses'&&isAdmin&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Expense description" value={expenseText} onChangeText={setExpenseText}/><TextInput style={styles.input} placeholder="Amount (PHP)" keyboardType="decimal-pad" value={expenseAmount} onChangeText={setExpenseAmount}/><TouchableOpacity style={styles.primary} onPress={addExpense}><Text style={styles.primaryText}>Save expense</Text></TouchableOpacity><FlatList data={expenses} keyExtractor={x=>x.id} renderItem={({item})=><View style={styles.line}><Text style={styles.flex}>{item.description}</Text><Text>{money(item.amount)}</Text></View>}/></View>}
     <Modal visible={!!selected} animationType="slide" onRequestClose={()=>setSelected(null)}><SafeAreaView style={styles.modal}><ScrollView>{selected?.image_url&&<Image source={{uri:selected.image_url}} style={styles.hero}/>}<Text style={styles.heading}>{selected?.name}</Text><Text style={styles.note}>{selected?.sku} {selected?.category}</Text><Text style={styles.body}>{selected?.description}</Text><Text style={styles.price}>{money(selected?.price)} · Stock: {selected?.stock}</Text>{isAdmin&&<TouchableOpacity style={styles.secondary} onPress={()=>editProduct(selected)}><Text>Edit product</Text></TouchableOpacity>}<Text style={styles.label}>Quantity to sell</Text><TextInput style={styles.input} keyboardType="number-pad" value={quantity} onChangeText={setQuantity}/><TouchableOpacity style={styles.primary} onPress={recordSale}><Text style={styles.primaryText}>Record sale</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setSelected(null)}><Text>Close</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
     <Modal visible={invoiceModal} animationType="slide" onRequestClose={()=>setInvoiceModal(false)}><SafeAreaView style={styles.modal}><ScrollView><Text style={styles.heading}>Create invoice</Text><Text style={styles.label}>Search customer</Text><TextInput style={styles.input} placeholder="Type customer name…" value={invoiceCustomerSearch} onChangeText={setInvoiceCustomerSearch}/>{invoiceCustomer ? <View style={[styles.line,styles.selectedLine]}><Text style={styles.flex}>Customer: {invoiceCustomer.name}</Text><TouchableOpacity onPress={()=>setInvoiceCustomer(null)}><Text style={styles.link}>Change</Text></TouchableOpacity></View> : customers.filter(x=>x.name.toLowerCase().includes(invoiceCustomerSearch.toLowerCase())).slice(0,8).map(x=><TouchableOpacity key={x.id} style={styles.line} onPress={()=>{setInvoiceCustomer(x);setInvoiceCustomerSearch(x.name);}}><Text style={styles.flex}>{x.name}</Text><Text style={styles.link}>Select</Text></TouchableOpacity>)}<Text style={styles.label}>Search product</Text><TextInput style={styles.input} placeholder="Type product name or SKU…" value={invoiceProductSearch} onChangeText={setInvoiceProductSearch}/>{invoiceProductSearch.trim() ? products.filter(x=>[x.name,x.sku].join(' ').toLowerCase().includes(invoiceProductSearch.toLowerCase())).slice(0,10).map(x=><TouchableOpacity key={x.id} style={[styles.line,invoiceProduct?.id===x.id&&styles.selectedLine]} onPress={()=>setInvoiceProduct(x)}><View style={styles.flex}><Text style={styles.productName}>{x.name}</Text><Text style={styles.note}>Stock: {x.stock} · {money(x.price)}</Text></View><Text style={styles.link}>{invoiceProduct?.id===x.id?'Selected':'Select'}</Text></TouchableOpacity>) : null}{invoiceProduct&&<View style={[styles.line,styles.selectedLine]}><Text style={styles.flex}>Selected: {invoiceProduct.name}</Text><TouchableOpacity onPress={()=>setInvoiceProduct(null)}><Text style={styles.link}>Change</Text></TouchableOpacity></View>}<TextInput style={styles.input} placeholder="Quantity" keyboardType="number-pad" value={invoiceQty} onChangeText={setInvoiceQty}/><TouchableOpacity style={styles.secondary} onPress={addInvoiceItem}><Text>Add selected product</Text></TouchableOpacity>{invoiceItems.map(x=><View key={x.product_id} style={styles.line}><Text style={styles.flex}>{x.name} × {x.quantity}</Text><Text>{money(x.price*x.quantity)}</Text><TouchableOpacity onPress={()=>setInvoiceItems(old=>old.filter(y=>y.product_id!==x.product_id))}><Text style={{color:'#c62828',paddingLeft:8}}>Remove</Text></TouchableOpacity></View>)}<View style={styles.line}><Text style={styles.flex}>Subtotal</Text><Text style={styles.price}>{money(invoiceSubtotal)}</Text></View><Text style={styles.label}>Discount (PHP)</Text><TextInput style={styles.input} keyboardType="decimal-pad" value={invoiceDiscount} onChangeText={setInvoiceDiscount}/><View style={styles.line}><Text style={styles.flex}>OVERALL TOTAL</Text><Text style={styles.metric}>{money(invoiceTotal)}</Text></View><Text style={styles.label}>Notes</Text><TextInput style={styles.input} value={invoiceNotes} onChangeText={setInvoiceNotes} multiline/><TouchableOpacity style={styles.primary} onPress={saveInvoice}><Text style={styles.primaryText}>Save invoice</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setInvoiceModal(false)}><Text>Cancel</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
-    <Modal visible={!!invoiceDetail} animationType="slide" onRequestClose={()=>setInvoiceDetail(null)}><SafeAreaView style={styles.modal}><ScrollView><Text style={styles.heading}>{invoiceDetail?.invoice_number}</Text><Text style={styles.note}>{invoiceDetail?.customers?.name || 'Customer'} · {invoiceDetail?.payment_status}</Text>{invoiceLines.map(x=><View key={x.id} style={styles.line}><Text style={styles.flex}>{x.product_name} × {x.quantity}</Text><Text>{money(x.line_total)}</Text></View>)}<View style={styles.invoiceTotals}><View style={styles.invoiceTotalRow}><Text>Subtotal</Text><Text>{money(invoiceDetail?.subtotal ?? (Number(invoiceDetail?.total || 0) + Number(invoiceDetail?.discount || 0)))}</Text></View><View style={styles.invoiceTotalRow}><Text>Discount</Text><Text>- {money(invoiceDetail?.discount)}</Text></View><View style={styles.invoiceTotalRow}><Text style={styles.invoiceGrandLabel}>TOTAL AMOUNT</Text><Text style={styles.invoiceGrandLabel}>{money(invoiceDetail?.total)}</Text></View></View><View style={styles.signatureRow}><View style={styles.signatureCell}><View style={styles.signatureLine}/><Text style={styles.signatureName}>{profile.full_name || profile.role}</Text><Text style={styles.note}>Prepared by</Text></View><View style={styles.signatureCell}><View style={styles.signatureLine}/><Text style={styles.signatureName}>{invoiceDetail?.customers?.name || 'Customer'}</Text><Text style={styles.note}>Customer signature</Text></View></View><Text style={styles.invoiceDate}>Date created: {invoiceDetail?.created_at ? new Date(invoiceDetail.created_at).toLocaleDateString() : ''}</Text><Text style={styles.metricLabel}>Paid: {money(invoiceDetail?.amount_paid)}</Text><Text style={styles.metric}>Balance: {money(invoiceDetail?.balance)}</Text><Text style={styles.label}>Payment history</Text>{invoicePayments.map(x=><View key={x.id} style={styles.line}><View style={styles.flex}><Text>{money(x.amount)} · {x.payment_method}</Text><Text style={styles.note}>{new Date(x.created_at).toLocaleString()} {x.reference_number || ''}</Text></View></View>)}{Number(invoiceDetail?.balance)>0&&<><Text style={styles.label}>Record payment</Text><TextInput style={styles.input} placeholder="Amount (PHP)" keyboardType="decimal-pad" value={paymentAmount} onChangeText={setPaymentAmount}/><TextInput style={styles.input} placeholder="Payment method (CASH / GCASH / BANK)" value={paymentMethod} onChangeText={setPaymentMethod}/><TextInput style={styles.input} placeholder="Reference number (optional)" value={paymentReference} onChangeText={setPaymentReference}/><TouchableOpacity style={styles.primary} onPress={saveInvoicePayment}><Text style={styles.primaryText}>Save payment</Text></TouchableOpacity></>}<TouchableOpacity style={styles.secondary} onPress={()=>setInvoiceDetail(null)}><Text>Close</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
+    <Modal visible={!!invoiceDetail} animationType="slide" onRequestClose={()=>{setInvoiceDetail(null);setPaymentScreen(false);}}><SafeAreaView style={styles.modal}><ScrollView>
+      {!paymentScreen ? <>
+      <Text style={styles.heading}>{invoiceDetail?.invoice_number}</Text><Text style={styles.note}>{invoiceDetail?.customers?.name || 'Customer'} · {invoiceDetail?.payment_status}</Text><Text style={styles.note}>{invoiceDetail?.customers?.address || 'No customer address saved'}</Text>
+      {invoiceLines.map(x=><View key={x.id} style={styles.line}><Text style={styles.flex}>{x.product_name} × {x.quantity}</Text><Text>{money(x.line_total)}</Text></View>)}
+      <View style={styles.invoiceTotals}><View style={styles.invoiceTotalRow}><Text>Subtotal</Text><Text>{money(invoiceDetail?.subtotal ?? (Number(invoiceDetail?.total || 0) + Number(invoiceDetail?.discount || 0)))}</Text></View><View style={styles.invoiceTotalRow}><Text>Discount</Text><Text>- {money(invoiceDetail?.discount)}</Text></View><View style={styles.invoiceTotalRow}><Text style={styles.invoiceGrandLabel}>TOTAL AMOUNT</Text><Text style={styles.invoiceGrandLabel}>{money(invoiceDetail?.total)}</Text></View></View>
+      <Text style={styles.label}>Prepared by: {profile.full_name || profile.role}</Text><Text style={styles.note}>Invoice date: {invoiceDetail?.created_at ? new Date(invoiceDetail.created_at).toLocaleDateString() : ''}</Text>
+      <Text style={styles.label}>Customer signature</Text>
+      <View style={{height:150,backgroundColor:'#fff',borderWidth:1,borderColor:'#9aa4b2',borderRadius:8,marginVertical:8}} onStartShouldSetResponder={()=>!invoiceDetail?.confirmed_at} onMoveShouldSetResponder={()=>!invoiceDetail?.confirmed_at} onResponderGrant={e=>{if(invoiceDetail?.confirmed_at)return;const {locationX:x,locationY:y}=e.nativeEvent;setSignaturePath('M '+x+' '+y);setSignatureDrawing(true);}} onResponderMove={e=>{if(!signatureDrawing||invoiceDetail?.confirmed_at)return;const {locationX:x,locationY:y}=e.nativeEvent;setSignaturePath(old=>old+' L '+x+' '+y);}} onResponderRelease={()=>setSignatureDrawing(false)}>
+        <Svg width="100%" height="100%"><Path d={invoiceDetail?.customer_signature || signaturePath} stroke="#111" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></Svg>
+      </View>
+      {!invoiceDetail?.confirmed_at ? <><TouchableOpacity style={styles.secondary} onPress={()=>setSignaturePath('')}><Text>Clear signature</Text></TouchableOpacity><TouchableOpacity style={styles.primary} onPress={confirmInvoice}><Text style={styles.primaryText}>Confirmed</Text></TouchableOpacity></> : <Text style={{color:'#16723a',fontWeight:'700',marginVertical:8}}>CONFIRMED · {new Date(invoiceDetail.confirmed_at).toLocaleString()}</Text>}
+      <TouchableOpacity style={styles.primary} onPress={printInvoice}><Text style={styles.primaryText}>Print invoice</Text></TouchableOpacity>
+      {invoiceDetail?.printed_at ? <Text style={styles.note}>Print dialog completed: {new Date(invoiceDetail.printed_at).toLocaleString()}</Text> : null}
+      {Number(invoiceDetail?.balance)>0 && invoiceDetail?.confirmed_at && invoiceDetail?.printed_at ? <TouchableOpacity style={styles.primary} onPress={openPaymentScreen}><Text style={styles.primaryText}>Proceed to Payment</Text></TouchableOpacity> : null}
+      <Text style={styles.metricLabel}>Paid: {money(invoiceDetail?.amount_paid)}</Text><Text style={styles.metric}>Balance: {money(invoiceDetail?.balance)}</Text>
+      <Text style={styles.label}>Payment history</Text>{invoicePayments.map(x=><View key={x.id} style={styles.line}><View style={styles.flex}><Text>{money(x.amount)} · {x.payment_method}</Text><Text style={styles.note}>{new Date(x.created_at).toLocaleString()} {x.reference_number || ''}</Text></View></View>)}
+      </> : <>
+      <Text style={styles.heading}>Receive payment</Text><Text style={styles.productName}>{invoiceDetail?.customers?.name}</Text><Text style={styles.note}>{invoiceDetail?.customers?.address}</Text><Text style={styles.label}>Invoice balance</Text><Text style={styles.metric}>{money(invoiceDetail?.balance)}</Text>
+      <View style={{flexDirection:'row',gap:10}}><TouchableOpacity style={[styles.secondary,{flex:1,borderColor:paymentMethod==='CASH'?'#2457c5':'#cbd2dc'}]} onPress={()=>setPaymentMethod('CASH')}><Text>Cash</Text></TouchableOpacity><TouchableOpacity style={[styles.secondary,{flex:1,borderColor:paymentMethod==='GCASH'?'#2457c5':'#cbd2dc'}]} onPress={()=>setPaymentMethod('GCASH')}><Text>GCash</Text></TouchableOpacity></View>
+      {paymentMethod==='CASH' ? <>
+        <Text style={styles.label}>Cash denominations – enter quantity of each</Text>
+        {[1000,500,200,100,50,20,10,5,1,0.25].map(d=><View key={String(d)} style={styles.line}><Text style={styles.flex}>{money(d)}</Text><TextInput style={[styles.input,{width:90,marginVertical:0}]} keyboardType="number-pad" value={cashCounts[d]} onChangeText={v=>setCashCounts(old=>({...old,[d]:v}))}/><Text>{money(d*Number(cashCounts[d]||0))}</Text></View>)}
+        <Text style={styles.label}>Total cash received</Text><Text style={styles.metric}>{money(Object.keys(cashCounts).reduce((sum,d)=>sum+Number(d)*Math.max(0,parseInt(cashCounts[d]||'0',10)||0),0))}</Text>
+        {(()=>{const total=Object.keys(cashCounts).reduce((sum,d)=>sum+Number(d)*Math.max(0,parseInt(cashCounts[d]||'0',10)||0),0);return <Text style={{color:total<Number(invoiceDetail?.balance)?'#c62828':'#16723a',fontWeight:'800'}}>{total<Number(invoiceDetail?.balance)?'Kulang ang payment': 'OK · Change: '+money(Math.max(0,total-Number(invoiceDetail?.balance)))}</Text>;})()}
+        <TouchableOpacity style={styles.primary} onPress={()=>{const total=Object.keys(cashCounts).reduce((sum,d)=>sum+Number(d)*Math.max(0,parseInt(cashCounts[d]||'0',10)||0),0);setCashReceived(String(total));submitInvoicePayment();}} disabled={paymentBusy}><Text style={styles.primaryText}>{paymentBusy?'Saving…':'Save cash payment'}</Text></TouchableOpacity>
+      </> : <>
+        {[[gcashSenderName,setGcashSenderName,'Sender full name'],[gcashSenderNumber,setGcashSenderNumber,'Sender GCash mobile number'],[gcashReceiverNumber,setGcashReceiverNumber,'Receiver GCash mobile number'],[gcashReference,setGcashReference,'GCash reference number']].map(([v,setter,placeholder])=><TextInput key={placeholder} style={styles.input} placeholder={placeholder} value={v} onChangeText={setter}/>)}
+        <Text style={styles.label}>Amount paid (PHP)</Text><TextInput style={styles.input} keyboardType="decimal-pad" value={paymentAmount} onChangeText={setPaymentAmount}/>
+        {Number(paymentAmount||0)<Number(invoiceDetail?.balance)?<Text style={{color:'#c62828',fontWeight:'800'}}>Kulang ang payment</Text>:Number(paymentAmount||0)===Number(invoiceDetail?.balance)?<Text style={{color:'#16723a',fontWeight:'800'}}>OK</Text>:<Text style={{color:'#c62828'}}>Enter the exact balance for GCash.</Text>}
+        <TouchableOpacity style={styles.primary} onPress={submitInvoicePayment} disabled={paymentBusy}><Text style={styles.primaryText}>{paymentBusy?'Saving…':'Save GCash payment'}</Text></TouchableOpacity>
+      </>}
+      <TouchableOpacity style={styles.secondary} onPress={()=>setPaymentScreen(false)}><Text>Back to invoice</Text></TouchableOpacity>
+      </>}
+      <TouchableOpacity style={styles.secondary} onPress={()=>{setInvoiceDetail(null);setPaymentScreen(false);}}><Text>Close</Text></TouchableOpacity>
+    </ScrollView></SafeAreaView></Modal>
     <Modal visible={vendorModal} animationType="slide" onRequestClose={()=>setVendorModal(false)}><SafeAreaView style={styles.modal}><ScrollView><Text style={styles.heading}>{editingVendor?'Edit vendor':'Add vendor'}</Text>{[['name','Vendor / company name'],['contact_person','Contact person'],['phone','Phone'],['email','Email'],['address','Address'],['notes','Notes']].map(([k,label])=><TextInput key={k} style={styles.input} placeholder={label} value={vendorForm[k]} onChangeText={v=>setVendorForm(old=>({...old,[k]:v}))} multiline={k==='address'||k==='notes'}/>)}<TouchableOpacity style={styles.primary} onPress={saveVendor}><Text style={styles.primaryText}>Save vendor</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setVendorModal(false)}><Text>Cancel</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
     <Modal visible={customerModal} animationType="slide" onRequestClose={()=>setCustomerModal(false)}><SafeAreaView style={styles.modal}><ScrollView><Text style={styles.heading}>{editingCustomer?'Edit customer':'Add customer'}</Text>{[['name','Customer name'],['phone','Phone'],['email','Email'],['address','Address'],['notes','Notes']].map(([k,label])=><TextInput key={k} style={styles.input} placeholder={label} value={customerForm[k]} onChangeText={v=>setCustomerForm(old=>({...old,[k]:v}))} multiline={k==='address'||k==='notes'}/>)}<TouchableOpacity style={styles.primary} onPress={saveCustomer}><Text style={styles.primaryText}>Save customer</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setCustomerModal(false)}><Text>Cancel</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
     <Modal visible={edit} animationType="slide" onRequestClose={()=>setEdit(false)}><SafeAreaView style={styles.modal}><ScrollView><Text style={styles.heading}>{selected?'Edit product':'Add product'}</Text>{[['name','Product name'],['sku','SKU'],['category','Category'],['description','Description'],['price','Selling price'],['cost','Cost'],['stock','Stock quantity']].map(([k,label])=><TextInput key={k} style={styles.input} placeholder={label} value={form[k]} onChangeText={v=>setForm(old=>({...old,[k]:v}))} keyboardType={['price','cost','stock'].includes(k)?'decimal-pad':'default'}/>)}<TouchableOpacity style={styles.secondary} onPress={choosePhoto}><Text>Choose product photo</Text></TouchableOpacity>{form.image_url&&<Image source={{uri:form.image_url}} style={styles.thumb}/>}<TouchableOpacity style={styles.primary} onPress={saveProduct}><Text style={styles.primaryText}>Save product</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setEdit(false)}><Text>Cancel</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
