@@ -239,10 +239,10 @@ export default function App() {
     setCashReceived(''); setGcashSenderName(''); setGcashSenderNumber(''); setGcashReceiverNumber(''); setGcashReference('');
     setPaymentScreen(true);
   }
-  async function submitInvoicePayment() {
+  async function submitInvoicePayment(receivedOverride) {
     if (paymentBusy) return;
     const balance = Number(invoiceDetail?.balance || 0);
-    const received = paymentMethod === 'CASH' ? Number(cashReceived || 0) : Number(paymentAmount || 0);
+    const received = receivedOverride !== undefined ? Number(receivedOverride) : (paymentMethod === 'CASH' ? Number(cashReceived || 0) : Number(paymentAmount || 0));
     if (!Number.isFinite(received) || received <= 0) return Alert.alert('Invalid payment','Enter a valid amount received.');
     if (paymentMethod === 'GCASH' && received !== balance) return Alert.alert('Check GCash amount','For GCash, enter the exact outstanding balance.');
     if (received < balance) return Alert.alert('Kulang ang payment','The amount received is less than the invoice balance.');
@@ -383,7 +383,7 @@ export default function App() {
         {[1000,500,200,100,50,20,10,5,1,0.25].map(d=><View key={String(d)} style={styles.line}><Text style={styles.flex}>{money(d)}</Text><TextInput style={[styles.input,{width:90,marginVertical:0}]} keyboardType="number-pad" value={cashCounts[d]} onChangeText={v=>setCashCounts(old=>({...old,[d]:v}))}/><Text>{money(d*Number(cashCounts[d]||0))}</Text></View>)}
         <Text style={styles.label}>Total cash received</Text><Text style={styles.metric}>{money(Object.keys(cashCounts).reduce((sum,d)=>sum+Number(d)*Math.max(0,parseInt(cashCounts[d]||'0',10)||0),0))}</Text>
         {(()=>{const total=Object.keys(cashCounts).reduce((sum,d)=>sum+Number(d)*Math.max(0,parseInt(cashCounts[d]||'0',10)||0),0);return <Text style={{color:total<Number(invoiceDetail?.balance)?'#c62828':'#16723a',fontWeight:'800'}}>{total<Number(invoiceDetail?.balance)?'Kulang ang payment': 'OK · Change: '+money(Math.max(0,total-Number(invoiceDetail?.balance)))}</Text>;})()}
-        <TouchableOpacity style={styles.primary} onPress={()=>{const total=Object.keys(cashCounts).reduce((sum,d)=>sum+Number(d)*Math.max(0,parseInt(cashCounts[d]||'0',10)||0),0);setCashReceived(String(total));submitInvoicePayment();}} disabled={paymentBusy}><Text style={styles.primaryText}>{paymentBusy?'Saving…':'Save cash payment'}</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.primary} onPress={()=>{const total=Object.keys(cashCounts).reduce((sum,d)=>sum+Number(d)*Math.max(0,parseInt(cashCounts[d]||'0',10)||0),0);setCashReceived(String(total));submitInvoicePayment(total);}} disabled={paymentBusy}><Text style={styles.primaryText}>{paymentBusy?'Saving…':'Save cash payment'}</Text></TouchableOpacity>
       </> : <>
         {[[gcashSenderName,setGcashSenderName,'Sender full name'],[gcashSenderNumber,setGcashSenderNumber,'Sender GCash mobile number'],[gcashReceiverNumber,setGcashReceiverNumber,'Receiver GCash mobile number'],[gcashReference,setGcashReference,'GCash reference number']].map(([v,setter,placeholder])=><TextInput key={placeholder} style={styles.input} placeholder={placeholder} value={v} onChangeText={setter}/>)}
         <Text style={styles.label}>Amount paid (PHP)</Text><TextInput style={styles.input} keyboardType="decimal-pad" value={paymentAmount} onChangeText={setPaymentAmount}/>
