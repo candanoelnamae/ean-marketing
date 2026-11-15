@@ -3,9 +3,30 @@ import { ActivityIndicator, Alert, FlatList, Image, Modal, SafeAreaView, ScrollV
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
+import * as Print from 'expo-print';
 import { supabase, supabaseConfigured } from './src/supabase';
 
 const money = n => '₱' + Number(n || 0).toFixed(2);
+
+function htmlEscape(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function invoicePrintHtml(invoice, lines, payment) {
+  const customer = invoice?.customers || {};
+  const subtotal = (lines || []).reduce((sum, line) => sum + Number(line.line_total || 0), 0);
+  const discount = Number(invoice?.discount || 0);
+  const total = Math.max(0, subtotal - discount);
+  const signature = invoice?.customer_signature
+    ? '<svg viewBox="0 0 300 100" style="width:100%;height:90px"><path d="' + htmlEscape(invoice.customer_signature) + '" fill="none" stroke="#111" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    : '<div style="height:70px;border-bottom:1px solid #333"></div>';
+  const rows = (lines || []).map(line => '<tr><td>' + htmlEscape(line.product_name) + '</td><td class="num">' + htmlEscape(line.quantity) + '</td><td class="num">' + money(line.line_total) + '</td></tr>').join('');
+  const method = payment.method === 'GCASH' ? 'GCash' : 'Cash';
+  const extra = payment.method === 'GCASH'
+    ? '<p>GCash reference: ' + htmlEscape(payment.reference || '') + '</p><p>Sender: ' + htmlEscape(payment.senderName || '') + ' (' + htmlEscape(payment.senderNumber || '') + ')</p><p>Receiver: ' + htmlEscape(payment.receiverNumber || '') + '</p>'
+    : '<p>Cash received: ' + money(payment.received) + '</p><p>Change: ' + money(Math.max(0, Number(payment.received || 0) - Number(payment.amount || 0))) + '</p>';
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Invoice</title><style>body{font-family:Arial,sans-serif;color:#172033;padding:28px;font-size:12px}h1{font-size:22px}.top{display:flex;justify-content:space-between;margin:22px 0}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{padding:10px 7px;border-bottom:1px solid #d9dee7;text-align:left}.num{text-align:right}.totals{margin:18px 0 18px auto;width:260px}.totals div{display:flex;justify-content:space-between;padding:5px 0}.grand{font-weight:bold;font-size:16px;border-top:1px solid #333;padding-top:9px!important}.payment{border-top:1px solid #cbd2dc;margin-top:22px;padding-top:12px}.signatures{display:flex;justify-content:space-between;gap:40px;margin-top:45px}.sig{width:45%;text-align:center}.sigline{border-top:1px solid #333;padding-top:7px;margin-top:4px}</style></head><body><h1>EAN Marketing</h1><div>INVOICE</div><div class="top"><div><b>Bill to:</b><br>' + htmlEscape(customer.name || 'Customer') + '<br>' + htmlEscape(customer.address || '') + '</div><div><b>Invoice:</b> ' + htmlEscape(invoice?.invoice_number || '') + '<br><b>Date:</b> ' + htmlEscape(invoice?.created_at ? new Date(invoice.created_at).toLocaleDateString() : '') + '<br><b>Prepared by:</b> ' + htmlEscape(payment.preparedBy || '') + '</div></div><table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Amount</th></tr></thead><tbody>' + rows + '</tbody></table><div class="totals"><div><span>Subtotal</span><span>' + money(subtotal) + '</span></div><div><span>Discount</span><span>- ' + money(discount) + '</span></div><div class="grand"><span>TOTAL</span><span>' + money(total) + '</span></div><div><span>Total paid</span><span>' + money(invoice?.amount_paid) + '</span></div><div><b>Balance due</b><b>' + money(invoice?.balance) + '</b></div></div><div class="payment"><b>Payment received now</b><p>Method: ' + method + '</p><p>Amount applied: ' + money(payment.amount) + '</p>' + extra + '<p>Payment date: ' + htmlEscape(new Date().toLocaleString()) + '</p></div><div class="signatures"><div class="sig">' + signature + '<div class="sigline">Customer signature</div><b>' + htmlEscape(customer.name || 'Customer') + '</b></div><div class="sig"><div style="height:90px"></div><div class="sigline">Prepared by</div><b>' + htmlEscape(payment.preparedBy || '') + '</b></div></div></body></html>';
+}
+
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -245,10 +266,22 @@ export default function App() {
         : {gcash_sender_name:gcashSenderName.trim(),gcash_sender_number:gcashSenderNumber.trim(),gcash_receiver_number:gcashReceiverNumber.trim()};
       const {error: detailError} = await supabase.from('payments').update(details).eq('id',paymentId);
       if (detailError) throw detailError;
-      const {data} = await supabase.from('invoices').select('*, customers(name,address)').eq('id',invoiceDetail.id).single();
-      if (data) await openInvoice(data);
+      const {data, error: invoiceRefreshError} = await supabase.from('invoices').select('*, customers(name,address)').eq('id',invoiceDetail.id).single();
+      if (invoiceRefreshError) throw invoiceRefreshError;
+      const {data: freshLines, error: linesError} = await supabase.from('invoice_items').select('*').eq('invoice_id',invoiceDetail.id).order('id');
+      if (linesError) throw linesError;
+      await openInvoice(data);
       setPaymentScreen(false); refresh();
       Alert.alert('Payment recorded', paymentMethod==='CASH' && received>balance ? 'Payment accepted. Change: '+money(received-balance) : 'The invoice payment has been saved.');
+      try {
+        await Print.printAsync({html:invoicePrintHtml(data, freshLines || [], {
+          method:paymentMethod, amount:balance, received, reference:gcashReference,
+          senderName:gcashSenderName, senderNumber:gcashSenderNumber,
+          receiverNumber:gcashReceiverNumber, preparedBy:profile?.full_name || profile?.role || ''
+        })});
+      } catch (printError) {
+        Alert.alert('Payment saved', 'The payment was recorded, but the invoice print dialog could not open. You can try again later. ' + (printError?.message || ''));
+      }
     } catch (e) { setPaymentError('Payment not recorded: '+(e.message || 'Please try again.')); }
     finally { setPaymentBusy(false); }
   }
