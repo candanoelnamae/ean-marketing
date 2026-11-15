@@ -400,7 +400,7 @@ export default function App() {
         <Text style={styles.label}>Amount paid (PHP)</Text><TextInput style={styles.input} keyboardType="decimal-pad" value={paymentAmount} onChangeText={setPaymentAmount}/>
         {Number(paymentAmount||0)<Number(invoiceDetail?.balance)?<Text style={{color:'#c62828',fontWeight:'800'}}>Kulang ang payment</Text>:Number(paymentAmount||0)===Number(invoiceDetail?.balance)?<Text style={{color:'#16723a',fontWeight:'800'}}>OK</Text>:<Text style={{color:'#c62828'}}>Enter the exact balance for GCash.</Text>}
         {paymentError ? <Text style={{color:'#c62828',fontWeight:'700',marginVertical:8}}>{paymentError}</Text> : null}
-        <TouchableOpacity style={styles.primary} onPress={submitInvoicePayment} disabled={paymentBusy}><Text style={styles.primaryText}>{paymentBusy?'Saving…':'Save GCash payment'}</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.primary} onPress={()=>submitInvoicePayment()} disabled={paymentBusy}><Text style={styles.primaryText}>{paymentBusy?'Saving…':'Save GCash payment'}</Text></TouchableOpacity>
       </>}
       <TouchableOpacity style={styles.secondary} onPress={()=>setPaymentScreen(false)}><Text>Back to invoice</Text></TouchableOpacity>
       </>}
