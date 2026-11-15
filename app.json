@@ -5,9 +5,19 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "android": {
       "package": "com.eanmarketing.bizstock"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "deb30674-325b-41a0-8c14-c92e3143e43d"
+      }
+    },
+    "plugins": [
+      "expo-asset"
+    ]
   }
 }
