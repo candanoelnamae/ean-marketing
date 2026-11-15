@@ -45,6 +45,7 @@ export default function App() {
   const [gcashReceiverNumber, setGcashReceiverNumber] = useState('');
   const [gcashReference, setGcashReference] = useState('');
   const [paymentBusy, setPaymentBusy] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
   const [vendorSearch, setVendorSearch] = useState('');
   const [vendorModal, setVendorModal] = useState(false);
   const [editingVendor, setEditingVendor] = useState(null);
@@ -221,17 +222,18 @@ export default function App() {
   }
   function openPaymentScreen() {
     setPaymentMethod('CASH'); setCashCounts({1000:'0',500:'0',200:'0',100:'0',50:'0',20:'0',10:'0',5:'0',1:'0',0.25:'0'});
-    setCashReceived(''); setGcashSenderName(''); setGcashSenderNumber(''); setGcashReceiverNumber(''); setGcashReference('');
+    setCashReceived(''); setGcashSenderName(''); setGcashSenderNumber(''); setGcashReceiverNumber(''); setGcashReference(''); setPaymentError('');
     setPaymentScreen(true);
   }
   async function submitInvoicePayment(receivedOverride) {
     if (paymentBusy) return;
+    setPaymentError('');
     const balance = Number(invoiceDetail?.balance || 0);
     const received = receivedOverride !== undefined ? Number(receivedOverride) : (paymentMethod === 'CASH' ? Number(cashReceived || 0) : Number(paymentAmount || 0));
-    if (!Number.isFinite(received) || received <= 0) return Alert.alert('Invalid payment','Enter a valid amount received.');
-    if (paymentMethod === 'GCASH' && received !== balance) return Alert.alert('Check GCash amount','For GCash, enter the exact outstanding balance.');
-    if (received < balance) return Alert.alert('Kulang ang payment','The amount received is less than the invoice balance.');
-    if (paymentMethod === 'GCASH' && (!gcashSenderName.trim() || !gcashSenderNumber.trim() || !gcashReceiverNumber.trim() || !gcashReference.trim())) return Alert.alert('Missing GCash details','Complete the sender name, sender number, receiver number, and reference number.');
+    if (!Number.isFinite(received) || received <= 0) { setPaymentError('Enter a valid amount received.'); return; }
+    if (paymentMethod === 'GCASH' && Math.round(received * 100) !== Math.round(balance * 100)) { setPaymentError('Enter the exact outstanding balance for GCash.'); return; }
+    if (received < balance) { setPaymentError('Kulang ang payment. The amount received is less than the invoice balance.'); return; }
+    if (paymentMethod === 'GCASH' && (!gcashSenderName.trim() || !gcashSenderNumber.trim() || !gcashReceiverNumber.trim() || !gcashReference.trim())) { setPaymentError('Complete the sender name, sender number, receiver number, and reference number.'); return; }
     setPaymentBusy(true);
     try {
       const {data: paymentId, error} = await supabase.rpc('record_invoice_payment', {p_invoice_id:invoiceDetail.id, p_amount:balance, p_payment_method:paymentMethod, p_reference_number:paymentMethod==='GCASH'?gcashReference.trim():null});
@@ -245,7 +247,7 @@ export default function App() {
       if (data) await openInvoice(data);
       setPaymentScreen(false); refresh();
       Alert.alert('Payment recorded', paymentMethod==='CASH' && received>balance ? 'Payment accepted. Change: '+money(received-balance) : 'The invoice payment has been saved.');
-    } catch (e) { Alert.alert('Payment not recorded', e.message || 'Please try again.'); }
+    } catch (e) { setPaymentError('Payment not recorded: '+(e.message || 'Please try again.')); }
     finally { setPaymentBusy(false); }
   }
   async function saveInvoicePayment() {
@@ -383,6 +385,7 @@ export default function App() {
         {[[gcashSenderName,setGcashSenderName,'Sender full name'],[gcashSenderNumber,setGcashSenderNumber,'Sender GCash mobile number'],[gcashReceiverNumber,setGcashReceiverNumber,'Receiver GCash mobile number'],[gcashReference,setGcashReference,'GCash reference number']].map(([v,setter,placeholder])=><TextInput key={placeholder} style={styles.input} placeholder={placeholder} value={v} onChangeText={setter}/>)}
         <Text style={styles.label}>Amount paid (PHP)</Text><TextInput style={styles.input} keyboardType="decimal-pad" value={paymentAmount} onChangeText={setPaymentAmount}/>
         {Number(paymentAmount||0)<Number(invoiceDetail?.balance)?<Text style={{color:'#c62828',fontWeight:'800'}}>Kulang ang payment</Text>:Number(paymentAmount||0)===Number(invoiceDetail?.balance)?<Text style={{color:'#16723a',fontWeight:'800'}}>OK</Text>:<Text style={{color:'#c62828'}}>Enter the exact balance for GCash.</Text>}
+        {paymentError ? <Text style={{color:'#c62828',fontWeight:'700',marginVertical:8}}>{paymentError}</Text> : null}
         <TouchableOpacity style={styles.primary} onPress={submitInvoicePayment} disabled={paymentBusy}><Text style={styles.primaryText}>{paymentBusy?'Saving…':'Save GCash payment'}</Text></TouchableOpacity>
       </>}
       <TouchableOpacity style={styles.secondary} onPress={()=>setPaymentScreen(false)}><Text>Back to invoice</Text></TouchableOpacity>
