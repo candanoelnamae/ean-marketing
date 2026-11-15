@@ -239,9 +239,11 @@ export default function App() {
     if (!signaturePath.trim()) return Alert.alert('Customer signature needed', 'Ask the customer to sign in the signature box first.');
     const {error} = await supabase.from('invoices').update({customer_signature:signaturePath, confirmed_at:new Date().toISOString(), confirmed_by:session.user.id}).eq('id', invoiceDetail.id);
     if (error) return Alert.alert('Could not confirm invoice', error.message);
-    const {data} = await supabase.from('invoices').select('*, customers(name,address)').eq('id', invoiceDetail.id).single();
+    const {data, error: refreshError} = await supabase.from('invoices').select('*, customers(name,address)').eq('id', invoiceDetail.id).single();
+    if (refreshError) return Alert.alert('Invoice confirmed', 'The invoice was confirmed, but could not be refreshed. Close and reopen it to continue to payment.');
     if (data) setInvoiceDetail(data);
-    Alert.alert('Invoice confirmed', 'The customer signature and confirmation have been saved.');
+    setSignaturePath('');
+    openPaymentScreen();
   }
   function openPaymentScreen() {
     setPaymentMethod('CASH'); setCashCounts({1000:'0',500:'0',200:'0',100:'0',50:'0',20:'0',10:'0',5:'0',1:'0',0.25:'0'});
