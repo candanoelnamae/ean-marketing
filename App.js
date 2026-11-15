@@ -385,7 +385,21 @@ export default function App() {
         <Text style={styles.heading}>{selectedCustomerHistory.name}</Text>
         <Text style={styles.note}>{selectedCustomerHistory.phone || ''} {selectedCustomerHistory.address || ''}</Text>
         <Text style={styles.label}>Transaction history · Invoices</Text>
-        {invoices.filter(x=>x.customer_id===selectedCustomerHistory.id).length ? invoices.filter(x=>x.customer_id===selectedCustomerHistory.id).map(item=><TouchableOpacity key={item.id} style={styles.line} onPress={()=>openInvoice(item)}><View style={styles.flex}><Text style={styles.productName}>{item.invoice_number}</Text><Text style={styles.note}>{new Date(item.created_at).toLocaleDateString()} · {item.payment_status}</Text></View><Text style={styles.price}>{money(item.total)}</Text></TouchableOpacity>) : <Text style={styles.note}>No invoices for this customer yet.</Text>}
+        <FlatList
+          style={styles.flex}
+          data={invoices.filter(x => x.customer_id === selectedCustomerHistory.id)}
+          keyExtractor={item => item.id}
+          ListEmptyComponent={<Text style={styles.note}>No invoices for this customer yet.</Text>}
+          renderItem={({item}) => (
+            <TouchableOpacity style={styles.line} onPress={() => openInvoice(item)}>
+              <View style={styles.flex}>
+                <Text style={styles.productName}>{item.invoice_number}</Text>
+                <Text style={styles.note}>{new Date(item.created_at).toLocaleDateString()} · {item.payment_status}</Text>
+              </View>
+              <Text style={styles.price}>{money(item.total)}</Text>
+            </TouchableOpacity>
+          )}
+        />
       </> : <>
         <TextInput style={styles.input} placeholder="Search customer name, phone, email…" value={customerSearch} onChangeText={setCustomerSearch}/>
         <TouchableOpacity style={styles.primary} onPress={newCustomer}><Text style={styles.primaryText}>+ Add customer</Text></TouchableOpacity>
