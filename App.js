@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Image, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import * as Print from 'expo-print';
 import Svg, { Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase, supabaseConfigured } from './src/supabase';
@@ -220,20 +219,6 @@ export default function App() {
     if (data) setInvoiceDetail(data);
     Alert.alert('Invoice confirmed', 'The customer signature and confirmation have been saved.');
   }
-  function htmlEscape(value) {
-    return String(value ?? '').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
-  }
-  async function printInvoice() {
-    if (!invoiceDetail?.confirmed_at || !invoiceDetail?.customer_signature) return Alert.alert('Confirmation required', 'Confirm the invoice with the customer signature before printing.');
-    const rows = invoiceLines.map(x => '<tr><td>'+htmlEscape(x.product_name)+'</td><td>'+htmlEscape(x.quantity)+'</td><td>'+money(Number(x.line_total||0)/Math.max(1,Number(x.quantity||1)))+'</td><td>'+money(x.line_total)+'</td></tr>').join('');
-    const html = '<html><body style="font-family:Arial;padding:28px"><h2>EAN Marketing</h2><h3>INVOICE '+htmlEscape(invoiceDetail.invoice_number)+'</h3><p><b>Customer:</b> '+htmlEscape(invoiceDetail.customers?.name)+'<br/><b>Address:</b> '+htmlEscape(invoiceDetail.customers?.address)+'</p><table width="100%" border="1" cellspacing="0" cellpadding="7"><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr>'+rows+'</table><p>Subtotal: '+money(invoiceDetailSubtotal)+'<br/>Discount: '+money(invoiceDetailDiscount)+'<br/><b>Total: '+money(invoiceDetailTotal)+'</b></p><p>Prepared by: '+htmlEscape(profile.full_name||profile.role)+'<br/>Invoice date: '+new Date(invoiceDetail.created_at).toLocaleDateString()+'</p><p>Customer signature:<br/><img style="width:260px;height:90px;object-fit:contain;border-bottom:1px solid #333" src="data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 180"><path d="'+invoiceDetail.customer_signature+'" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>')+'"/></p></body></html>';
-    try {
-      await Print.printAsync({html});
-      const {error} = await supabase.from('invoices').update({printed_at:new Date().toISOString()}).eq('id',invoiceDetail.id);
-      if (error) Alert.alert('Printed, but status not saved', error.message);
-      else setInvoiceDetail(old=>({...old,printed_at:new Date().toISOString()}));
-    } catch (e) { Alert.alert('Print failed', e.message || 'Could not open the print dialog.'); }
-  }
   function openPaymentScreen() {
     setPaymentMethod('CASH'); setCashCounts({1000:'0',500:'0',200:'0',100:'0',50:'0',20:'0',10:'0',5:'0',1:'0',0.25:'0'});
     setCashReceived(''); setGcashSenderName(''); setGcashSenderNumber(''); setGcashReceiverNumber(''); setGcashReference('');
@@ -367,15 +352,22 @@ export default function App() {
       <Text style={styles.heading}>{invoiceDetail?.invoice_number}</Text><Text style={styles.note}>{invoiceDetail?.customers?.name || 'Customer'} · {invoiceDetail?.payment_status}</Text><Text style={styles.note}>{invoiceDetail?.customers?.address || 'No customer address saved'}</Text>
       {invoiceLines.map(x=><View key={x.id} style={styles.line}><Text style={styles.flex}>{x.product_name} × {x.quantity}</Text><Text>{money(x.line_total)}</Text></View>)}
       <View style={styles.invoiceTotals}><View style={styles.invoiceTotalRow}><Text>Subtotal</Text><Text>{money(invoiceDetailSubtotal)}</Text></View><View style={styles.invoiceTotalRow}><Text>Discount</Text><Text>- {money(invoiceDetailDiscount)}</Text></View><View style={styles.invoiceTotalRow}><Text style={styles.invoiceGrandLabel}>TOTAL AMOUNT</Text><Text style={styles.invoiceGrandLabel}>{money(invoiceDetailTotal)}</Text></View></View>
-      <Text style={styles.label}>Prepared by: {profile.full_name || profile.role}</Text><Text style={styles.note}>Invoice date: {invoiceDetail?.created_at ? new Date(invoiceDetail.created_at).toLocaleDateString() : ''}</Text>
-      <Text style={styles.label}>Customer signature</Text>
-      <View style={{height:150,backgroundColor:'#fff',borderWidth:1,borderColor:'#9aa4b2',borderRadius:8,marginVertical:8}} onStartShouldSetResponder={()=>!invoiceDetail?.confirmed_at} onMoveShouldSetResponder={()=>!invoiceDetail?.confirmed_at} onResponderGrant={e=>{if(invoiceDetail?.confirmed_at)return;const {locationX:x,locationY:y}=e.nativeEvent;setSignaturePath('M '+x+' '+y);setSignatureDrawing(true);}} onResponderMove={e=>{if(!signatureDrawing||invoiceDetail?.confirmed_at)return;const {locationX:x,locationY:y}=e.nativeEvent;setSignaturePath(old=>old+' L '+x+' '+y);}} onResponderRelease={()=>setSignatureDrawing(false)}>
-        <Svg width="100%" height="100%"><Path d={invoiceDetail?.customer_signature || signaturePath} stroke="#111" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></Svg>
+      <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'flex-start',gap:16,marginTop:12}}>
+        <View style={{flex:1}}>
+          <Text style={styles.label}>Prepared by: {profile.full_name || profile.role}</Text>
+          <Text style={styles.note}>Invoice date: {invoiceDetail?.created_at ? new Date(invoiceDetail.created_at).toLocaleDateString() : ''}</Text>
+          {invoiceDetail?.confirmed_at ? <Text style={{color:'#16723a',fontWeight:'700',marginTop:8}}>CONFIRMED</Text> : null}
+        </View>
+        <View style={{width:'52%',maxWidth:300,alignItems:'stretch'}}>
+          <Text style={styles.label}>Customer e-signature</Text>
+          <View style={{height:105,backgroundColor:'#fff',borderWidth:1,borderColor:'#9aa4b2',borderRadius:8,marginTop:4,marginBottom:6,overflow:'hidden'}} onStartShouldSetResponder={()=>!invoiceDetail?.confirmed_at} onMoveShouldSetResponder={()=>!invoiceDetail?.confirmed_at} onResponderGrant={e=>{if(invoiceDetail?.confirmed_at)return;const {locationX:x,locationY:y}=e.nativeEvent;setSignaturePath('M '+x+' '+y);setSignatureDrawing(true);}} onResponderMove={e=>{if(!signatureDrawing||invoiceDetail?.confirmed_at)return;const {locationX:x,locationY:y}=e.nativeEvent;setSignaturePath(old=>old+' L '+x+' '+y);}} onResponderRelease={()=>setSignatureDrawing(false)}>
+            <Svg width="100%" height="100%"><Path d={invoiceDetail?.customer_signature || signaturePath} stroke="#111" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></Svg>
+          </View>
+          <Text style={{fontWeight:'700',textAlign:'center'}}>{invoiceDetail?.customers?.name || 'Customer name'}</Text>
+        </View>
       </View>
-      {!invoiceDetail?.confirmed_at ? <><TouchableOpacity style={styles.secondary} onPress={()=>setSignaturePath('')}><Text>Clear signature</Text></TouchableOpacity><TouchableOpacity style={styles.primary} onPress={confirmInvoice}><Text style={styles.primaryText}>Confirmed</Text></TouchableOpacity></> : <Text style={{color:'#16723a',fontWeight:'700',marginVertical:8}}>CONFIRMED · {new Date(invoiceDetail.confirmed_at).toLocaleString()}</Text>}
-      <TouchableOpacity style={styles.primary} onPress={printInvoice}><Text style={styles.primaryText}>Print invoice</Text></TouchableOpacity>
-      {invoiceDetail?.printed_at ? <Text style={styles.note}>Print dialog completed: {new Date(invoiceDetail.printed_at).toLocaleString()}</Text> : null}
-      {Number(invoiceDetail?.balance)>0 && invoiceDetail?.confirmed_at && invoiceDetail?.printed_at ? <TouchableOpacity style={styles.primary} onPress={openPaymentScreen}><Text style={styles.primaryText}>Proceed to Payment</Text></TouchableOpacity> : null}
+      {!invoiceDetail?.confirmed_at ? <><TouchableOpacity style={styles.secondary} onPress={()=>setSignaturePath('')}><Text>Clear signature</Text></TouchableOpacity><TouchableOpacity style={styles.primary} onPress={confirmInvoice}><Text style={styles.primaryText}>Confirmed</Text></TouchableOpacity></> : null}
+      {Number(invoiceDetail?.balance)>0 && invoiceDetail?.confirmed_at ? <TouchableOpacity style={styles.primary} onPress={openPaymentScreen}><Text style={styles.primaryText}>Proceed to Payment</Text></TouchableOpacity> : null}
       <Text style={styles.metricLabel}>Paid: {money(invoiceDetail?.amount_paid)}</Text><Text style={styles.metric}>Balance: {money(invoiceDetail?.balance)}</Text>
       <Text style={styles.label}>Payment history</Text>{invoicePayments.map(x=><View key={x.id} style={styles.line}><View style={styles.flex}><Text>{money(x.amount)} · {x.payment_method}</Text><Text style={styles.note}>{new Date(x.created_at).toLocaleString()} {x.reference_number || ''}</Text></View></View>)}
       </> : <>
