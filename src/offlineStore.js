@@ -9,6 +9,10 @@ async function database() {
       const db = await SQLite.openDatabaseAsync('ean-marketing-offline.db');
       await db.execAsync(`
         PRAGMA journal_mode = WAL;
+        CREATE TABLE IF NOT EXISTS auth_storage (
+          key TEXT PRIMARY KEY NOT NULL,
+          value TEXT
+        );
         CREATE TABLE IF NOT EXISTS cached_records (
           user_id TEXT NOT NULL,
           cache_key TEXT NOT NULL,
@@ -98,3 +102,20 @@ export function subscribeToNetworkChanges(callback) {
     callback(Boolean(state.isConnected && state.isInternetReachable !== false));
   });
 }
+
+
+export const supabaseAuthStorage = {
+  async getItem(key) {
+    const db = await database();
+    const row = await db.getFirstAsync('SELECT value FROM auth_storage WHERE key = ?', key);
+    return row?.value ?? null;
+  },
+  async setItem(key, value) {
+    const db = await database();
+    await db.runAsync('INSERT OR REPLACE INTO auth_storage (key, value) VALUES (?, ?)', key, value);
+  },
+  async removeItem(key) {
+    const db = await database();
+    await db.runAsync('DELETE FROM auth_storage WHERE key = ?', key);
+  }
+};
