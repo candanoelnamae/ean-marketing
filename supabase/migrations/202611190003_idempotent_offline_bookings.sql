@@ -7,11 +7,15 @@ create unique index if not exists bookings_client_request_id_uidx
   on public.bookings(client_request_id)
   where client_request_id is not null;
 
+drop function if exists public.create_booking(uuid, jsonb, text);
+drop function if exists public.create_booking(uuid, jsonb, text, uuid);
+
 create or replace function public.create_booking(
   p_customer_id uuid,
   p_items jsonb,
-  p_notes text default null,
-  p_client_request_id uuid default null
+  p_notes text,
+  p_client_request_id uuid,
+  p_use_snapshots boolean default false
 )
 returns uuid
 language plpgsql
@@ -23,6 +27,9 @@ declare
   v_item jsonb;
   v_product public.products%rowtype;
   v_qty integer;
+  v_selling_price numeric(12,2);
+  v_cost_price numeric(12,2);
+  v_product_name text;
   v_selling_total numeric(12,2) := 0;
   v_cost_total numeric(12,2) := 0;
 begin
@@ -67,17 +74,24 @@ begin
       raise exception 'One of the selected products no longer exists.';
     end if;
 
+    v_selling_price := case when p_use_snapshots then coalesce((v_item->>'selling_price')::numeric, v_product.price, 0) else coalesce(v_product.price, 0) end;
+    v_cost_price := case when p_use_snapshots then coalesce((v_item->>'cost_price')::numeric, v_product.cost, 0) else coalesce(v_product.cost, 0) end;
+    v_product_name := case when p_use_snapshots then coalesce(nullif(v_item->>'product_name', ''), v_product.name) else v_product.name end;
+    if v_selling_price < 0 or v_cost_price < 0 then
+      raise exception 'Product prices cannot be negative.';
+    end if;
+
     insert into public.booking_items (
       booking_id, product_id, product_name, quantity,
       selling_price, cost_price, selling_subtotal, cost_subtotal
     ) values (
-      v_booking_id, v_product.id, v_product.name, v_qty,
-      coalesce(v_product.price, 0), coalesce(v_product.cost, 0),
-      round(coalesce(v_product.price, 0) * v_qty, 2),
-      round(coalesce(v_product.cost, 0) * v_qty, 2)
+      v_booking_id, v_product.id, v_product_name, v_qty,
+      v_selling_price, v_cost_price,
+      round(v_selling_price * v_qty, 2),
+      round(v_cost_price * v_qty, 2)
     );
-    v_selling_total := v_selling_total + coalesce(v_product.price, 0) * v_qty;
-    v_cost_total := v_cost_total + coalesce(v_product.cost, 0) * v_qty;
+    v_selling_total := v_selling_total + v_selling_price * v_qty;
+    v_cost_total := v_cost_total + v_cost_price * v_qty;
   end loop;
 
   update public.bookings
@@ -88,5 +102,5 @@ begin
 end;
 $$;
 
-revoke all on function public.create_booking(uuid, jsonb, text, uuid) from public;
-grant execute on function public.create_booking(uuid, jsonb, text, uuid) to authenticated;
+revoke all on function public.create_booking(uuid, jsonb, text, uuid, boolean) from public;
+grant execute on function public.create_booking(uuid, jsonb, text, uuid, boolean) to authenticated;
