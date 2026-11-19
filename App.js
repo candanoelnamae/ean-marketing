@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, AppState, Alert, FlatList, Image, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
@@ -145,6 +145,17 @@ export default function App() {
     });
     return () => subscription.remove();
   }, [session, profile]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async state => {
+      if (state === 'active') {
+        const online = await getNetworkStatus().catch(() => false);
+        setIsOnline(online);
+        if (online && session && profile) syncPendingOperations();
+      }
+    });
+    return () => subscription.remove();
+  }, [session, profile, isOnline]);
 
   // Keep every signed-in screen in sync with changes made by other users.
   useEffect(() => {
@@ -516,8 +527,7 @@ export default function App() {
           receiverNumber:gcashReceiverNumber, preparedBy:profile?.full_name || profile?.role || ''
         })});
       } catch (printError) {
-        Alert.alert('Payment saved', 'The payment was recorded, but the invoice print dialog could not open. You can try again later. ' + (printError?.message || ''));
-      }
+        Alert.alert('Payment saved', 'The payment was recorded, but the invoice print dialog could not open. You can try again later. ' + (printError?.message || ''));      }
     } catch (e) { setPaymentError('Payment not recorded: '+(e.message || 'Please try again.')); }
     finally { setPaymentBusy(false); }
   }
