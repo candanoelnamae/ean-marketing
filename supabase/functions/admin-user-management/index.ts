@@ -42,12 +42,25 @@ Deno.serve(async (req) => {
       .eq("id", callerData.user.id)
       .maybeSingle();
 
+    const body = await req.json();
+    const action = body?.action;
+
+    // Any authenticated user may change only their own password.
+    if (action === "change_own_password") {
+      const password = typeof body.password === "string" ? body.password : "";
+      if (password.length < 8) return json({ error: "New password must be at least 8 characters." }, 400);
+      const { error: passwordError } = await admin.auth.admin.updateUserById(callerData.user.id, { password });
+      if (passwordError) throw passwordError;
+      const { error: flagError } = await admin.from("profiles")
+        .update({ must_change_password: false })
+        .eq("id", callerData.user.id);
+      if (flagError) throw flagError;
+      return json({ success: true });
+    }
+
     if (profileError || callerProfile?.role !== "ADMIN") {
       return json({ error: "Administrator access required." }, 403);
     }
-
-    const body = await req.json();
-    const action = body?.action;
 
     if (action === "list") {
       const { data, error } = await admin
