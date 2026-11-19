@@ -5,9 +5,14 @@ import Svg, { Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import * as Print from 'expo-print';
 import { supabase, supabaseConfigured } from './src/supabase';
-import { saveCachedRecords, readCachedRecords, getNetworkStatus, subscribeToNetworkChanges } from './src/offlineStore';
+import { saveCachedRecords, readCachedRecords, addPendingOperation, getPendingOperations, removePendingOperation, recordOperationFailure, getNetworkStatus, subscribeToNetworkChanges } from './src/offlineStore';
 
 const money = n => '₱' + Number(n || 0).toFixed(2);
+const makeLocalId = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+  const r = Math.random() * 16 | 0;
+  return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+});
+const sameRecordVersion = (remote, base) => Boolean(remote && base && Object.keys(base).every(key => JSON.stringify(remote[key] ?? null) === JSON.stringify(base[key] ?? null)));
 
 function htmlEscape(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -34,6 +39,8 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [syncBusy, setSyncBusy] = useState(false);
   const [tab, setTab] = useState('Home');
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
@@ -121,12 +128,16 @@ export default function App() {
   }, []);
 
   useEffect(() => { if (session && profile) refresh(); }, [session, profile, tab]);
+  useEffect(() => { if (session && profile && isOnline) updatePendingCount().then(syncPendingOperations); }, [session, profile, isOnline]);
 
   useEffect(() => {
     getNetworkStatus().then(setIsOnline).catch(() => setIsOnline(false));
     const subscription = subscribeToNetworkChanges(online => {
       setIsOnline(online);
-      if (online && session && profile) refresh();
+      if (online && session && profile) {
+        refresh();
+        syncPendingOperations();
+      }
     });
     return () => subscription.remove();
   }, [session, profile]);
@@ -148,6 +159,49 @@ export default function App() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [session, profile, isAdmin]);
+
+  async function updatePendingCount() {
+    if (!session?.user?.id) return;
+    const queued = await getPendingOperations(session.user.id);
+    setPendingSyncCount(queued.length);
+  }
+
+  async function syncPendingOperations() {
+    if (!session?.user?.id || !isOnline || syncBusy) return;
+    setSyncBusy(true);
+    try {
+      const queued = await getPendingOperations(session.user.id);
+      for (const operation of queued) {
+        try {
+          const {data: remote, error: readError} = await supabase.from(operation.table_name).select('*').eq('id', operation.record_id).maybeSingle();
+          if (readError) throw readError;
+          if (operation.operation_type === 'upsert') {
+            const base = operation.payload.baseRecord;
+            if (base && (!remote || !sameRecordVersion(remote, base))) {
+              throw new Error('Sync conflict: this record changed on the server after your offline edit. The pending change was kept on this device and was not uploaded.');
+            }
+            const {error} = await supabase.from(operation.table_name).upsert(operation.payload.record, {onConflict:'id'});
+            if (error) throw error;
+          } else if (operation.operation_type === 'delete') {
+            if (remote && !sameRecordVersion(remote, operation.payload.baseRecord)) {
+              throw new Error('Sync conflict: this record changed on the server after your offline delete. The pending change was kept on this device.');
+            }
+            if (remote) {
+              const {error} = await supabase.from(operation.table_name).delete().eq('id', operation.record_id);
+              if (error) throw error;
+            }
+          }
+          await removePendingOperation(operation.id);
+        } catch (error) {
+          await recordOperationFailure(operation.id, error?.message || 'Sync failed');
+        }
+      }
+      await updatePendingCount();
+      await refresh();
+    } finally {
+      setSyncBusy(false);
+    }
+  }
 
   async function loadProfile(id) {
     const {data, error} = await supabase.from('profiles').select('*').eq('id', id).single();
@@ -224,6 +278,21 @@ export default function App() {
     if (!canAddProducts) return Alert.alert('Not allowed', 'You must be signed in to add products.');
     if (!form.name.trim() || !form.price || !form.cost || form.stock === '') return Alert.alert('Missing information', 'Enter product name, price, cost, and stock.');
     const payload = {...form, name:form.name.trim(), price:Number(form.price), cost:Number(form.cost), stock:parseInt(form.stock,10)};
+    const online = await getNetworkStatus();
+    if (!online) {
+      const record = selected ? {...selected, ...payload} : {...payload, id:makeLocalId()};
+      await addPendingOperation(session.user.id, {
+        type:'upsert', table:'products', recordId:record.id,
+        payload:{record, baseRecord:selected || null}
+      });
+      const next = selected ? products.map(x=>x.id===selected.id?record:x) : [...products,record];
+      setProducts(next);
+      await saveCachedRecords(session.user.id, 'products', next);
+      await updatePendingCount();
+      setEdit(false);
+      Alert.alert('Saved on this device', 'This product change is queued and will sync when internet returns.');
+      return;
+    }
     const result = selected
       ? await supabase.from('products').update(payload).eq('id', selected.id)
       : await supabase.from('products').insert(payload);
@@ -235,6 +304,15 @@ export default function App() {
     Alert.alert('Delete product?', 'Delete "' + item.name + '"? If it is already used in a sale or invoice, the database may prevent deletion to protect transaction history.', [
       {text:'Cancel', style:'cancel'},
       {text:'Delete', style:'destructive', onPress:async () => {
+        const online = await getNetworkStatus();
+        if (!online) {
+          await addPendingOperation(session.user.id, {type:'delete', table:'products', recordId:item.id, payload:{baseRecord:item}});
+          const next = products.filter(x=>x.id!==item.id);
+          setProducts(next); await saveCachedRecords(session.user.id, 'products', next);
+          await updatePendingCount(); setSelected(null);
+          Alert.alert('Delete queued', 'The product is removed from this device and will sync when internet returns.');
+          return;
+        }
         const {error} = await supabase.from('products').delete().eq('id', item.id);
         if (error) Alert.alert('Could not delete product', error.message);
         else { setSelected(null); refresh(); Alert.alert('Product deleted', 'The product has been deleted.'); }
@@ -483,6 +561,21 @@ export default function App() {
   async function saveCustomer() {
     if (!customerForm.name.trim()) return Alert.alert('Missing information', 'Enter the customer name.');
     const payload = {...customerForm, name:customerForm.name.trim()};
+    const online = await getNetworkStatus();
+    if (!online) {
+      const record = editingCustomer
+        ? {...editingCustomer, ...payload}
+        : {...payload, id:makeLocalId(), created_by:session.user.id};
+      await addPendingOperation(session.user.id, {
+        type:'upsert', table:'customers', recordId:record.id,
+        payload:{record, baseRecord:editingCustomer || null}
+      });
+      const next = editingCustomer ? customers.map(x=>x.id===editingCustomer.id?record:x) : [...customers,record];
+      setCustomers(next); await saveCachedRecords(session.user.id, 'customers', next);
+      await updatePendingCount(); setCustomerModal(false);
+      Alert.alert('Saved on this device', 'This customer change is queued and will sync when internet returns.');
+      return;
+    }
     const result = editingCustomer
       ? await supabase.from('customers').update(payload).eq('id', editingCustomer.id)
       : await supabase.from('customers').insert({...payload, created_by:session.user.id});
@@ -494,6 +587,15 @@ export default function App() {
     Alert.alert('Delete customer?', `Delete ${item.name}?`, [
       {text:'Cancel', style:'cancel'},
       {text:'Delete', style:'destructive', onPress:async () => {
+        const online = await getNetworkStatus();
+        if (!online) {
+          await addPendingOperation(session.user.id, {type:'delete', table:'customers', recordId:item.id, payload:{baseRecord:item}});
+          const next = customers.filter(x=>x.id!==item.id);
+          setCustomers(next); await saveCachedRecords(session.user.id, 'customers', next);
+          await updatePendingCount();
+          Alert.alert('Delete queued', 'The customer is removed from this device and will sync when internet returns.');
+          return;
+        }
         const {error} = await supabase.from('customers').delete().eq('id', item.id);
         if (error) Alert.alert('Could not delete customer', error.message);
         else refresh();
@@ -516,8 +618,7 @@ export default function App() {
   const invoiceDetailDiscount = Number(invoiceDetail?.discount || 0);
   const invoiceDetailTotal = Math.max(0, invoiceDetailSubtotal - invoiceDetailDiscount);
 
-  return <SafeAreaView style={styles.page}><StatusBar style="dark"/><View style={styles.header}><View><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>{profile.full_name || profile.role}</Text>{!isOnline&&<Text style={styles.note}>Offline · showing saved records</Text>}</View><TouchableOpacity onPress={signOut}><Text style={styles.link}>Sign out</Text></TouchableOpacity></View>
-    {tab!=='Home'&&<TouchableOpacity style={styles.homeLink} onPress={()=>setTab('Home')}><Text style={styles.link}>‹ Home</Text></TouchableOpacity>}
+  return <SafeAreaView style={styles.page}><StatusBar style="dark"/><View style={styles.header}><View><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>{profile.full_name || profile.role}</Text>{!isOnline&&<Text style={styles.note}>Offline · showing saved records</Text>}{pendingSyncCount>0&&<Text style={styles.note}>{pendingSyncCount} change(s) waiting to sync</Text>}</View><TouchableOpacity onPress={signOut}><Text style={styles.link}>Sign out</Text></TouchableOpacity></View>    {tab!=='Home'&&<TouchableOpacity style={styles.homeLink} onPress={()=>setTab('Home')}><Text style={styles.link}>‹ Home</Text></TouchableOpacity>}
     {tab==='Home'&&<View style={styles.dashboard}>
       {[
         ['Products','▦'],['Sales','₱'],['Booking / Orders','🛒'],['Booking Search','⌕'],
