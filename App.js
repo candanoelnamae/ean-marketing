@@ -151,7 +151,8 @@ export default function App() {
     if (!s.error) setSales(s.data || []);
     const c = await supabase.from('customers').select('*').order('name');
     if (!c.error) setCustomers(c.data || []);
-    const inv = await supabase.from('invoices').select('*, customers(name,address)').order('created_at', {ascending:false}).limit(100);    const b = await supabase.from('bookings').select('*, customers(name)').order('created_at', {ascending:false}).limit(200);
+    const inv = await supabase.from('invoices').select('*, customers(name,address)').order('created_at', {ascending:false}).limit(100);
+    const b = await supabase.from('bookings').select('*, customers(name)').order('created_at', {ascending:false}).limit(200);
     if (!b.error) setBookings(b.data || []);
 
     if (!inv.error) setInvoices(inv.data || []);
