@@ -194,6 +194,12 @@ export default function App() {
             await removePendingOperation(operation.id);
             continue;
           }
+          if (operation.operation_type === 'rpc' && operation.table_name === 'record_sale') {
+            const {error} = await supabase.rpc('record_sale_idempotent', operation.payload.rpcPayload);
+            if (error) throw error;
+            await removePendingOperation(operation.id);
+            continue;
+          }
           const {data: remote, error: readError} = await supabase.from(operation.table_name).select('*').eq('id', operation.record_id).maybeSingle();
           if (readError) throw readError;
           if (operation.operation_type === 'upsert') {
@@ -250,6 +256,11 @@ export default function App() {
             if (operation.operation_type === 'rpc' && operation.table_name === 'create_booking' && cacheKey === 'bookings') {
               const localBooking = operation.payload.localBooking;
               if (localBooking && !rows.some(item => item.id === localBooking.id)) rows = [localBooking, ...rows];
+              continue;
+            }
+            if (operation.operation_type === 'rpc' && operation.table_name === 'record_sale' && cacheKey === 'sales') {
+              const localSale = operation.payload.localRecord;
+              if (localSale && !rows.some(item => item.id === localSale.id)) rows = [localSale, ...rows];
               continue;
             }
             if (operation.table_name !== cacheKey) continue;
@@ -396,8 +407,36 @@ export default function App() {
   async function recordSale() {
     const qty = parseInt(quantity,10);
     if (!Number.isInteger(qty) || qty < 1) return Alert.alert('Invalid quantity', 'Enter a quantity of at least 1.');
-    if (!(await getNetworkStatus())) return Alert.alert('Internet required for sales','This sale changes product stock. It has not been recorded. Connect to the internet before confirming the sale.');
-    const {error} = await supabase.rpc('record_sale', {p_product_id:selected.id, p_quantity:qty});
+    if (!selected) return Alert.alert('Choose a product', 'Select a product before recording a sale.');
+    const requestId = makeLocalId();
+    const rpcPayload = {p_client_request_id:requestId,p_product_id:selected.id,p_quantity:qty};
+    const online = await getNetworkStatus();
+    if (!online) {
+      const available = Number(selected.stock);
+      if (Number.isFinite(available) && qty > available) return Alert.alert('Not enough saved stock', 'The quantity is greater than the stock currently saved on this device.');
+      const unitPrice = Number(selected.price || 0);
+      const unitCost = Number(selected.cost || 0);
+      const localSale = {
+        id:requestId, product_id:selected.id, products:{name:selected.name},
+        quantity:qty, total_amount:unitPrice*qty, profit:(unitPrice-unitCost)*qty,
+        created_at:new Date().toISOString(), pending_sync:true
+      };
+      const updatedProducts = products.map(product => product.id === selected.id
+        ? {...product, stock:Math.max(0,Number(product.stock || 0)-qty)}
+        : product);
+      const updatedSales = [localSale,...sales];
+      await addPendingOperation(session.user.id,{type:'rpc',table:'record_sale',recordId:requestId,payload:{rpcPayload,localRecord:localSale}});
+      setProducts(updatedProducts); setSales(updatedSales);
+      await Promise.all([
+        saveCachedRecords(session.user.id,'products',updatedProducts),
+        saveCachedRecords(session.user.id,'sales',updatedSales)
+      ]);
+      await updatePendingCount();
+      setSelected(null); setQuantity('1');
+      Alert.alert('Sale saved on this device','This sale is waiting to sync. Stock will be checked again by the server when the connection returns.');
+      return;
+    }
+    const {error} = await supabase.rpc('record_sale_idempotent', rpcPayload);
     if (error) return Alert.alert('Sale not recorded', error.message);
     setSelected(null); setQuantity('1'); refresh();
     Alert.alert('Sale recorded', 'Stock has been updated.');
