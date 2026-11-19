@@ -200,6 +200,12 @@ export default function App() {
             await removePendingOperation(operation.id);
             continue;
           }
+          if (operation.operation_type === 'rpc' && operation.table_name === 'create_invoice') {
+            const {error} = await supabase.rpc('create_invoice_idempotent', operation.payload.rpcPayload);
+            if (error) throw error;
+            await removePendingOperation(operation.id);
+            continue;
+          }
           if (operation.operation_type === 'rpc' && operation.table_name === 'record_invoice_payment') {
             const {data: paymentId, error} = await supabase.rpc('record_invoice_payment_idempotent', operation.payload.rpcPayload);
             if (error) throw error;
@@ -271,6 +277,11 @@ export default function App() {
             if (operation.operation_type === 'rpc' && operation.table_name === 'record_sale' && cacheKey === 'sales') {
               const localSale = operation.payload.localRecord;
               if (localSale && !rows.some(item => item.id === localSale.id)) rows = [localSale, ...rows];
+              continue;
+            }
+            if (operation.operation_type === 'rpc' && operation.table_name === 'create_invoice' && cacheKey === 'invoices') {
+              const localInvoice = operation.payload.localInvoice;
+              if (localInvoice && !rows.some(item => item.id === localInvoice.id)) rows = [localInvoice, ...rows];
               continue;
             }
             if (operation.table_name !== cacheKey) continue;
@@ -588,10 +599,58 @@ export default function App() {
   async function saveInvoice() {
     if (!invoiceCustomer) return Alert.alert('Choose a customer', 'Select a customer for this invoice.');
     if (!invoiceItems.length) return Alert.alert('Add products', 'Add at least one product to the invoice.');
-    if (!(await getNetworkStatus())) return Alert.alert('Internet required for invoices','The invoice numbering and stock/amount records are managed by the server. This invoice has not been created.');
     const discount = Number(invoiceDiscount || 0);
     if (!Number.isFinite(discount) || discount < 0 || discount > invoiceSubtotal) return Alert.alert('Check discount', 'Enter a valid discount that does not exceed the subtotal.');
-    const {data: invoiceId, error} = await supabase.rpc('create_invoice', {p_customer_id:invoiceCustomer.id, p_items:invoiceItems.map(x=>({product_id:x.product_id, quantity:x.quantity})), p_discount:discount, p_amount_paid:0, p_due_date:null, p_notes:invoiceNotes || null});
+    const clientRequestId = makeLocalId();
+    const rpcPayload = {
+      p_client_request_id:clientRequestId,
+      p_customer_id:invoiceCustomer.id,
+      p_items:invoiceItems.map(x=>({product_id:x.product_id, quantity:x.quantity})),
+      p_discount:discount,
+      p_amount_paid:0,
+      p_due_date:invoiceDueDate.trim() || null,
+      p_notes:invoiceNotes || null
+    };
+    const online = await getNetworkStatus();
+    if (!online) {
+      const localLines = invoiceItems.map(item => ({
+        id:makeLocalId(), invoice_id:clientRequestId, product_id:item.product_id,
+        product_name:item.name, quantity:item.quantity, unit_price:Number(item.price || 0),
+        line_total:Number(item.price || 0) * item.quantity
+      }));
+      const subtotal = localLines.reduce((sum,line)=>sum+Number(line.line_total || 0),0);
+      const total = Math.max(0,subtotal-discount);
+      const localInvoice = {
+        id:clientRequestId, invoice_number:'PENDING-'+clientRequestId.slice(0,8).toUpperCase(),
+        customer_id:invoiceCustomer.id, customers:{name:invoiceCustomer.name,address:invoiceCustomer.address || ''},
+        subtotal, discount, total, amount_paid:0, balance:total, payment_status:'UNPAID',
+        due_date:rpcPayload.p_due_date, notes:invoiceNotes || null,
+        created_by:session.user.id, created_at:new Date().toISOString(),
+        is_offline_pending:true, local_items:localLines
+      };
+      const nextProducts = products.map(product => {
+        const line = invoiceItems.find(item=>item.product_id===product.id);
+        return line ? {...product,stock:Math.max(0,Number(product.stock || 0)-line.quantity)} : product;
+      });
+      await addPendingOperation(session.user.id,{
+        type:'rpc',table:'create_invoice',recordId:clientRequestId,
+        payload:{rpcPayload,localInvoice}
+      });
+      const nextInvoices=[localInvoice,...invoices];
+      setProducts(nextProducts); setInvoices(nextInvoices);
+      await Promise.all([
+        saveCachedRecords(session.user.id,'products',nextProducts),
+        saveCachedRecords(session.user.id,'invoices',nextInvoices),
+        saveCachedRecords(session.user.id,'invoice_detail_'+localInvoice.id,localInvoice),
+        saveCachedRecords(session.user.id,'invoice_items_'+localInvoice.id,localLines)
+      ]);
+      await updatePendingCount();
+      setInvoiceModal(false); setInvoiceCustomerSearch(''); setInvoiceProductSearch('');
+      await openInvoice(localInvoice);
+      Alert.alert('Invoice saved on this device','This invoice has a temporary reference and is waiting to sync. The server will assign its permanent number and verify stock when internet returns.');
+      return;
+    }
+    const {data: invoiceId, error} = await supabase.rpc('create_invoice_idempotent', rpcPayload);
     if (error) return Alert.alert('Invoice not created', error.message);
     setInvoiceModal(false); setInvoiceCustomerSearch(''); setInvoiceProductSearch('');
     await refresh();
@@ -603,6 +662,11 @@ export default function App() {
     setInvoiceDetail(item); setPaymentAmount(''); setPaymentMethod('CASH'); setPaymentReference(''); setSignaturePath(''); setPaymentScreen(false);
     const linesKey='invoice_items_'+item.id;
     const paymentsKey='invoice_payments_'+item.id;
+    if (item.is_offline_pending && Array.isArray(item.local_items)) {
+      setInvoiceLines(item.local_items);
+      setInvoicePayments([]);
+      return;
+    }
     const online=await getNetworkStatus();
     if (online) {
       const [lines,pays]=await Promise.all([
