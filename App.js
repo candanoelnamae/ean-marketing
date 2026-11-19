@@ -177,19 +177,40 @@ export default function App() {
     ]);
   }
   async function choosePhoto() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return Alert.alert('Permission needed', 'Allow photo access to choose a product image.');
-    const result = await ImagePicker.launchImageLibraryAsync({mediaTypes:['images'], quality:0.75});
-    if (result.canceled) return;
-    const asset = result.assets[0];
-    const response = await fetch(asset.uri);
-    const blob = await response.blob();
-    const ext = (asset.fileName || 'photo.jpg').split('.').pop();
-    const path = 'products/' + Date.now() + '.' + ext;
-    const {error} = await supabase.storage.from('product-images').upload(path, blob, {contentType:asset.mimeType || 'image/jpeg', upsert:true});
-    if (error) return Alert.alert('Photo upload failed', error.message);
-    const {data} = supabase.storage.from('product-images').getPublicUrl(path);
-    setForm(old => ({...old, image_url:data.publicUrl}));
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission needed', 'Allow photo access to choose a product image.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.75,
+      });
+      if (result.canceled || !result.assets?.length) return;
+
+      const asset = result.assets[0];
+      const response = await fetch(asset.uri);
+      if (!response.ok) throw new Error('Could not read the selected photo from this device.');
+      const fileData = await response.arrayBuffer();
+      if (!fileData || fileData.byteLength === 0) throw new Error('The selected photo is empty or could not be read.');
+
+      const contentType = asset.mimeType || 'image/jpeg';
+      const extension = contentType.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+      const path = 'products/' + Date.now() + '.' + extension;
+      const { error } = await supabase.storage
+        .from('product-images')
+        .upload(path, fileData, { contentType, upsert: true });
+
+      if (error) throw error;
+
+      const { data } = supabase.storage.from('product-images').getPublicUrl(path);
+      setForm(old => ({ ...old, image_url: data.publicUrl }));
+      Alert.alert('Photo uploaded', 'Your product photo is ready. Save the product to keep it.');
+    } catch (error) {
+      Alert.alert('Photo upload failed', error?.message || 'Please try choosing the photo again.');
+    }
   }
   async function recordSale() {
     const qty = parseInt(quantity,10);
