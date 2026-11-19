@@ -1,0 +1,21 @@
+name: Validate Expo Android app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  android-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm install
+      - name: Export Android bundle
+        run: npx expo export --platform android
