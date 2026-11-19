@@ -128,7 +128,11 @@ export default function App() {
   }, []);
 
   useEffect(() => { if (session && profile) refresh(); }, [session, profile, tab]);
-  useEffect(() => { if (session && profile && isOnline) updatePendingCount().then(syncPendingOperations); }, [session, profile, isOnline]);
+  useEffect(() => {
+    if (!session || !profile) return;
+    updatePendingCount();
+    if (isOnline) syncPendingOperations();
+  }, [session, profile, isOnline]);
 
   useEffect(() => {
     getNetworkStatus().then(setIsOnline).catch(() => setIsOnline(false));
@@ -223,7 +227,18 @@ export default function App() {
       try {
         const result = await query;
         if (!result.error) {
-          const rows = result.data || [];
+          let rows = result.data || [];
+          const queued = await getPendingOperations(userId);
+          for (const operation of queued.filter(item => item.table_name === cacheKey)) {
+            if (operation.operation_type === 'upsert') {
+              const record = operation.payload.record;
+              rows = rows.some(item => item.id === operation.record_id)
+                ? rows.map(item => item.id === operation.record_id ? record : item)
+                : [...rows, record];
+            } else if (operation.operation_type === 'delete') {
+              rows = rows.filter(item => item.id !== operation.record_id);
+            }
+          }
           setter(rows);
           await saveCachedRecords(userId, cacheKey, rows);
           return;
@@ -516,7 +531,6 @@ export default function App() {
     if (data) await openInvoice(data);
     Alert.alert('Payment recorded', 'The invoice balance has been updated.');
   }
-
   function newVendor() {
     setEditingVendor(null);
     setVendorForm({name:'', contact_person:'', phone:'', email:'', address:'', notes:''});
