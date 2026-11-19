@@ -189,7 +189,7 @@ export default function App() {
       for (const operation of queued) {
         try {
           if (operation.operation_type === 'rpc' && operation.table_name === 'create_booking') {
-            const {error} = await supabase.rpc('create_booking', operation.payload);
+            const {error} = await supabase.rpc('create_booking', operation.payload.rpcPayload);
             if (error) throw error;
             await removePendingOperation(operation.id);
             continue;
@@ -246,7 +246,13 @@ export default function App() {
         if (!result.error) {
           let rows = result.data || [];
           const queued = await getPendingOperations(userId);
-          for (const operation of queued.filter(item => item.table_name === cacheKey)) {
+          for (const operation of queued) {
+            if (operation.operation_type === 'rpc' && operation.table_name === 'create_booking' && cacheKey === 'bookings') {
+              const localBooking = operation.payload.localBooking;
+              if (localBooking && !rows.some(item => item.id === localBooking.id)) rows = [localBooking, ...rows];
+              continue;
+            }
+            if (operation.table_name !== cacheKey) continue;
             if (operation.operation_type === 'upsert') {
               const record = operation.payload.record;
               rows = rows.some(item => item.id === operation.record_id)
@@ -459,7 +465,7 @@ export default function App() {
         is_offline_pending:true, local_items:localItems
       };
       await addPendingOperation(session.user.id, {
-        type:'rpc', table:'create_booking', recordId:clientRequestId, payload:rpcPayload
+        type:'rpc', table:'create_booking', recordId:clientRequestId, payload:{rpcPayload, localBooking}
       });
       const next = [localBooking, ...bookings];
       setBookings(next); await saveCachedRecords(session.user.id, 'bookings', next);
