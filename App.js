@@ -498,9 +498,19 @@ export default function App() {
       setBookingDetailItems(item.local_items);
       return;
     }
-    const {data, error} = await supabase.from('booking_items').select('*').eq('booking_id', item.id).order('created_at');
-    if (error) Alert.alert('Could not load order items', error.message);
-    setBookingDetailItems(data || []);
+    const cacheKey = 'booking_items_' + item.id;
+    const online = await getNetworkStatus();
+    if (online) {
+      const {data, error} = await supabase.from('booking_items').select('*').eq('booking_id', item.id).order('created_at');
+      if (!error) {
+        setBookingDetailItems(data || []);
+        await saveCachedRecords(session.user.id, cacheKey, data || []);
+        return;
+      }
+    }
+    const cachedItems = await readCachedRecords(session.user.id, cacheKey);
+    setBookingDetailItems(cachedItems || []);
+    if (cachedItems === null) Alert.alert('Order items unavailable offline', 'Open this order once while online to save its details on this device.');
   }
   async function updateBookingStatus(item, status) {
     const {error} = await supabase.from('bookings').update({status}).eq('id', item.id);
