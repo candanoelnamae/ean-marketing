@@ -404,6 +404,16 @@ export default function App() {
   async function addExpense() {
     const amount = Number(expenseAmount);
     if (!expenseText.trim() || !Number.isFinite(amount) || amount <= 0) return Alert.alert('Check details', 'Enter an expense description and a valid amount.');
+    const online = await getNetworkStatus();
+    if (!online) {
+      const record = {id:makeLocalId(), description:expenseText.trim(), amount, created_by:session.user.id, created_at:new Date().toISOString(), created_by_name:profile?.full_name || ''};
+      await addPendingOperation(session.user.id, {type:'upsert', table:'expenses', recordId:record.id, payload:{record, baseRecord:null}});
+      const next=[record,...expenses]; setExpenses(next);
+      await saveCachedRecords(session.user.id,'expenses',next); await updatePendingCount();
+      setExpenseText(''); setExpenseAmount('');
+      Alert.alert('Expense saved on this device','This expense will sync when internet returns.');
+      return;
+    }
     const {error} = await supabase.from('expenses').insert({description:expenseText.trim(), amount, created_by:session.user.id});
     if (error) return Alert.alert('Could not save expense', error.message);
     setExpenseText(''); setExpenseAmount(''); refresh();
@@ -614,6 +624,16 @@ export default function App() {
   async function saveVendor() {
     if (!vendorForm.name.trim()) return Alert.alert('Missing information', 'Enter the vendor or company name.');
     const payload = {...vendorForm, name:vendorForm.name.trim()};
+    const online = await getNetworkStatus();
+    if (!online) {
+      const record = editingVendor ? {...editingVendor,...payload} : {...payload,id:makeLocalId()};
+      await addPendingOperation(session.user.id,{type:'upsert',table:'vendors',recordId:record.id,payload:{record,baseRecord:editingVendor||null}});
+      const next=editingVendor?vendors.map(x=>x.id===editingVendor.id?record:x):[...vendors,record];
+      setVendors(next); await saveCachedRecords(session.user.id,'vendors',next); await updatePendingCount();
+      setVendorModal(false);
+      Alert.alert('Vendor saved on this device','This change will sync when internet returns.');
+      return;
+    }
     const result = editingVendor
       ? await supabase.from('vendors').update(payload).eq('id', editingVendor.id)
       : await supabase.from('vendors').insert(payload);
@@ -625,6 +645,14 @@ export default function App() {
     Alert.alert('Delete vendor?', `Delete ${item.name}?`, [
       {text:'Cancel', style:'cancel'},
       {text:'Delete', style:'destructive', onPress:async () => {
+        const online=await getNetworkStatus();
+        if(!online) {
+          await addPendingOperation(session.user.id,{type:'delete',table:'vendors',recordId:item.id,payload:{baseRecord:item}});
+          const next=vendors.filter(x=>x.id!==item.id);
+          setVendors(next); await saveCachedRecords(session.user.id,'vendors',next); await updatePendingCount();
+          Alert.alert('Delete queued','The vendor will be deleted when internet returns.');
+          return;
+        }
         const {error} = await supabase.from('vendors').delete().eq('id', item.id);
         if (error) Alert.alert('Could not delete vendor', error.message);
         else refresh();
