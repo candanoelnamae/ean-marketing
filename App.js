@@ -396,6 +396,7 @@ export default function App() {
   async function recordSale() {
     const qty = parseInt(quantity,10);
     if (!Number.isInteger(qty) || qty < 1) return Alert.alert('Invalid quantity', 'Enter a quantity of at least 1.');
+    if (!(await getNetworkStatus())) return Alert.alert('Internet required for sales','This sale changes product stock. It has not been recorded. Connect to the internet before confirming the sale.');
     const {error} = await supabase.rpc('record_sale', {p_product_id:selected.id, p_quantity:qty});
     if (error) return Alert.alert('Sale not recorded', error.message);
     setSelected(null); setQuantity('1'); refresh();
@@ -538,6 +539,7 @@ export default function App() {
   async function saveInvoice() {
     if (!invoiceCustomer) return Alert.alert('Choose a customer', 'Select a customer for this invoice.');
     if (!invoiceItems.length) return Alert.alert('Add products', 'Add at least one product to the invoice.');
+    if (!(await getNetworkStatus())) return Alert.alert('Internet required for invoices','The invoice numbering and stock/amount records are managed by the server. This invoice has not been created.');
     const discount = Number(invoiceDiscount || 0);
     if (!Number.isFinite(discount) || discount < 0 || discount > invoiceSubtotal) return Alert.alert('Check discount', 'Enter a valid discount that does not exceed the subtotal.');
     const {data: invoiceId, error} = await supabase.rpc('create_invoice', {p_customer_id:invoiceCustomer.id, p_items:invoiceItems.map(x=>({product_id:x.product_id, quantity:x.quantity})), p_discount:discount, p_amount_paid:0, p_due_date:null, p_notes:invoiceNotes || null});
