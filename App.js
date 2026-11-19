@@ -422,13 +422,21 @@ export default function App() {
     if (!bookingCustomer) return Alert.alert('Choose a customer', 'Select a customer for this order.');
     if (!bookingItems.length) return Alert.alert('Add products', 'Add at least one product to the order.');
     const clientRequestId = makeLocalId();
+    const online = await getNetworkStatus();
     const rpcPayload = {
       p_customer_id:bookingCustomer.id,
-      p_items:bookingItems.map(x=>({product_id:x.product_id, quantity:x.quantity})),
+      p_items:bookingItems.map(x => {
+        const product = products.find(p => p.id === x.product_id);
+        return {
+          product_id:x.product_id, quantity:x.quantity,
+          product_name:x.name, selling_price:Number(x.price || 0),
+          cost_price:Number(product?.cost || 0)
+        };
+      }),
       p_notes:bookingNotes || null,
-      p_client_request_id:clientRequestId
+      p_client_request_id:clientRequestId,
+      p_use_snapshots:!online
     };
-    const online = await getNetworkStatus();
     if (!online) {
       const localItems = bookingItems.map(x => {
         const product = products.find(p => p.id === x.product_id);
