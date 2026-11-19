@@ -119,6 +119,8 @@ export default function App() {
       .on('postgres_changes', {event:'*', schema:'public', table:'payments'}, refresh)
       .on('postgres_changes', {event:'*', schema:'public', table:'vendors'}, refresh)
       .on('postgres_changes', {event:'*', schema:'public', table:'expenses'}, refresh)
+      .on('postgres_changes', {event:'*', schema:'public', table:'bookings'}, refresh)
+      .on('postgres_changes', {event:'*', schema:'public', table:'booking_items'}, refresh)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [session, profile, isAdmin]);
