@@ -107,6 +107,11 @@ export default function App() {
   const [bookingSearch, setBookingSearch] = useState('');
   const [bookingDetail, setBookingDetail] = useState(null);
   const [bookingDetailItems, setBookingDetailItems] = useState([]);
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminUserModal, setAdminUserModal] = useState(false);
+  const [editingAdminUser, setEditingAdminUser] = useState(null);
+  const [adminUserForm, setAdminUserForm] = useState({full_name:'', username:'', role:'USER', password:''});
+
 
 
   const isAdmin = profile?.role === 'ADMIN';
@@ -910,6 +915,67 @@ export default function App() {
     ]);
   }
 
+
+  async function adminUserAction(payload) {
+    const {data, error} = await supabase.functions.invoke('admin-user-management', {body:payload});
+    if (error) throw new Error(error.message || 'Could not contact user-management service.');
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+  async function loadAdminUsers() {
+    try {
+      const result = await adminUserAction({action:'list'});
+      setAdminUsers(result.users || []);
+    } catch (error) {
+      Alert.alert('User management', error.message || 'Could not load users.');
+    }
+  }
+  function openAdminUser(item = null) {
+    setEditingAdminUser(item);
+    setAdminUserForm({
+      full_name:item?.full_name || '',
+      username:item?.username || '',
+      role:item?.role || 'USER',
+      password:''
+    });
+    setAdminUserModal(true);
+  }
+  async function saveAdminUser() {
+    const full_name = adminUserForm.full_name.trim();
+    const username = adminUserForm.username.trim();
+    if (!full_name || !username) return Alert.alert('Missing information','Enter the full name and username.');
+    if (!editingAdminUser && adminUserForm.password.length < 6) return Alert.alert('Password required','Enter a default password with at least 6 characters.');
+    try {
+      if (editingAdminUser) {
+        await adminUserAction({action:'update', id:editingAdminUser.id, full_name, username, role:adminUserForm.role});
+        if (adminUserForm.password) {
+          await adminUserAction({action:'reset_password', id:editingAdminUser.id, password:adminUserForm.password});
+        }
+      } else {
+        await adminUserAction({action:'create', full_name, username, role:adminUserForm.role, password:adminUserForm.password});
+      }
+      setAdminUserModal(false);
+      await loadAdminUsers();
+      Alert.alert('User saved','The user details have been saved.');
+    } catch (error) {
+      Alert.alert('Could not save user', error.message || 'Please try again.');
+    }
+  }
+  function deleteAdminUser(item) {
+    Alert.alert('Delete user?', 'Delete ' + (item.full_name || item.username) + '? This cannot be undone.', [
+      {text:'Cancel', style:'cancel'},
+      {text:'Delete', style:'destructive', onPress:async () => {
+        try {
+          await adminUserAction({action:'delete', id:item.id});
+          await loadAdminUsers();
+          Alert.alert('User deleted','The account has been deleted.');
+        } catch (error) {
+          Alert.alert('Could not delete user', error.message || 'Please try again.');
+        }
+      }}
+    ]);
+  }
+
   if (!supabaseConfigured) return <SafeAreaView style={styles.center}><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.note}>Setup is not complete yet. Add your Supabase URL and publishable key to the app environment before running it.</Text></SafeAreaView>;
   if (loading) return <View style={styles.center}><ActivityIndicator size="large" /><Text>Loading EAN Marketing…</Text></View>;
   if (!session) return <SafeAreaView style={styles.center}><StatusBar style="dark"/><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>Sales & Inventory</Text><TextInput style={styles.input} placeholder="Username" autoCapitalize="none" value={username} onChangeText={setUsername}/><TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword}/><TouchableOpacity style={styles.primary} onPress={signIn}><Text style={styles.primaryText}>Sign in</Text></TouchableOpacity></SafeAreaView>;
@@ -947,7 +1013,16 @@ export default function App() {
         <View style={styles.flex}><Text style={styles.productName}>{item.reference_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text></View><Text style={styles.link}>View</Text>
       </TouchableOpacity>}/>
     </View>}
-    {tab==='Settings'&&<View style={styles.line}><View style={styles.flex}><Text style={styles.productName}>Admin Settings</Text><Text style={styles.note}>User management and access controls are not enabled yet.</Text></View></View>}
+    {tab==='Settings'&&isAdmin&&<View style={styles.flex}>
+      <Text style={styles.productName}>User Management</Text>
+      <Text style={styles.note}>Add users, change roles, edit account details, reset passwords, or delete accounts.</Text>
+      <TouchableOpacity style={styles.primary} onPress={()=>openAdminUser()}><Text style={styles.primaryText}>+ Add user</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.secondary} onPress={loadAdminUsers}><Text>Refresh user list</Text></TouchableOpacity>
+      <FlatList data={adminUsers} keyExtractor={x=>x.id} ListEmptyComponent={<Text style={styles.note}>Tap Refresh user list to load accounts.</Text>} renderItem={({item})=><View style={styles.line}>
+        <View style={styles.flex}><Text style={styles.productName}>{item.full_name || item.username}</Text><Text style={styles.note}>@{item.username || 'no username'} · {item.role}{item.must_change_password?' · Must change password':''}</Text></View>
+        <View><TouchableOpacity onPress={()=>openAdminUser(item)}><Text style={styles.link}>Edit / Reset</Text></TouchableOpacity><TouchableOpacity onPress={()=>deleteAdminUser(item)}><Text style={{color:'#c62828',padding:8}}>Delete</Text></TouchableOpacity></View>
+      </View>}/>
+    </View>}
     {tab==='Products' && <View style={styles.flex}><TextInput style={styles.input} placeholder="Search name, SKU, category…" value={search} onChangeText={setSearch}/>{canAddProducts&&<TouchableOpacity style={styles.primary} onPress={newProduct}><Text style={styles.primaryText}>+ Add product</Text></TouchableOpacity>}<FlatList data={filtered} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No products yet.</Text>} renderItem={({item})=><TouchableOpacity style={styles.product} onPress={()=>{setSelected(item);setQuantity('1')}}>{item.image_url?<Image source={{uri:item.image_url}} style={styles.thumb}/>:<View style={styles.thumbPlaceholder}><Text>Photo</Text></View>}<View style={styles.flex}><Text style={styles.productName}>{item.name}</Text><Text style={styles.note}>{item.sku || item.category || 'No SKU'} · Stock: {item.stock}</Text><Text style={styles.price}>{money(item.price)}</Text></View></TouchableOpacity>}/></View>}
     {tab==='Sales' && <FlatList data={sales} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No sales recorded yet.</Text>} renderItem={({item})=><View style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{item.products?.name || 'Product'}</Text><Text style={styles.note}>Qty: {item.quantity} · {new Date(item.created_at).toLocaleString()}{item.pending_sync ? ' · Waiting to sync' : ''}</Text></View><Text style={styles.price}>{money(item.total_amount)}</Text></View>}/>}
     {tab==='Billing'&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Search invoice number or customer…" value={billingSearch} onChangeText={setBillingSearch}/><TouchableOpacity style={styles.primary} onPress={newInvoice}><Text style={styles.primaryText}>+ Create invoice</Text></TouchableOpacity><FlatList data={invoices.filter(x=>[x.invoice_number,x.customers?.name,x.payment_status].join(' ').toLowerCase().includes(billingSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No matching invoices.</Text>} renderItem={({item})=><TouchableOpacity style={styles.line} onPress={()=>openInvoice(item)}><View style={styles.flex}><Text style={styles.productName}>{item.invoice_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{item.payment_status} · Balance: {money(item.balance)}</Text></View><Text style={styles.price}>{money(item.total)}</Text></TouchableOpacity>}/></View>}
@@ -980,6 +1055,18 @@ export default function App() {
     </View>}
     {tab==='Reports' && <View style={styles.report}><Text style={styles.metricLabel}>Recorded sales (latest 100)</Text><Text style={styles.metric}>{money(totalSales)}</Text><Text style={styles.metricLabel}>Gross profit</Text><Text style={styles.metric}>{money(totalProfit)}</Text>{isAdmin&&<><Text style={styles.metricLabel}>Expenses (latest 100)</Text><Text style={styles.metric}>{money(totalExpenses)}</Text><Text style={styles.metricLabel}>Profit after listed expenses</Text><Text style={styles.metric}>{money(totalProfit-totalExpenses)}</Text></>}</View>}
     {tab==='Expenses'&&isAdmin&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Expense description" value={expenseText} onChangeText={setExpenseText}/><TextInput style={styles.input} placeholder="Amount (PHP)" keyboardType="decimal-pad" value={expenseAmount} onChangeText={setExpenseAmount}/><TouchableOpacity style={styles.primary} onPress={addExpense}><Text style={styles.primaryText}>Save expense</Text></TouchableOpacity><FlatList data={expenses} keyExtractor={x=>x.id} renderItem={({item})=><View style={styles.line}><Text style={styles.flex}>{item.description}</Text><Text>{money(item.amount)}</Text></View>}/></View>}
+    <Modal visible={adminUserModal} animationType="slide" onRequestClose={()=>setAdminUserModal(false)}><SafeAreaView style={styles.modal}><ScrollView>
+      <Text style={styles.heading}>{editingAdminUser?'Edit user':'Add user'}</Text>
+      <Text style={styles.label}>Full name</Text><TextInput style={styles.input} value={adminUserForm.full_name} onChangeText={v=>setAdminUserForm(old=>({...old,full_name:v}))} placeholder="Full name"/>
+      <Text style={styles.label}>Username</Text><TextInput style={styles.input} autoCapitalize="none" value={adminUserForm.username} onChangeText={v=>setAdminUserForm(old=>({...old,username:v}))} placeholder="Username"/>
+      <Text style={styles.label}>Role</Text>
+      {['USER','ADMIN'].map(role=><TouchableOpacity key={role} style={[styles.secondary,{borderColor:adminUserForm.role===role?'#2457c5':'#cbd2dc'}]} onPress={()=>setAdminUserForm(old=>({...old,role}))}><Text>{adminUserForm.role===role?'✓ ':''}{role}</Text></TouchableOpacity>)}
+      <Text style={styles.label}>{editingAdminUser?'New password (leave blank to keep current password)':'Default password'}</Text>
+      <TextInput style={styles.input} secureTextEntry value={adminUserForm.password} onChangeText={v=>setAdminUserForm(old=>({...old,password:v}))} placeholder="At least 6 characters"/>
+      {editingAdminUser?<Text style={styles.note}>If you enter a new password, the user will be required to change it at next login.</Text>:<Text style={styles.note}>New users will be required to change this temporary password at next login.</Text>}
+      <TouchableOpacity style={styles.primary} onPress={saveAdminUser}><Text style={styles.primaryText}>Save user</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.secondary} onPress={()=>setAdminUserModal(false)}><Text>Cancel</Text></TouchableOpacity>
+    </ScrollView></SafeAreaView></Modal>
     <Modal visible={!!selected} animationType="slide" onRequestClose={()=>setSelected(null)}><SafeAreaView style={styles.modal}><ScrollView>{selected?.image_url&&<Image source={{uri:selected.image_url}} style={styles.hero}/>}<Text style={styles.heading}>{selected?.name}</Text><Text style={styles.note}>{selected?.sku} {selected?.category}</Text><Text style={styles.body}>{selected?.description}</Text><Text style={styles.price}>{money(selected?.price)} · Stock: {selected?.stock}</Text>{isAdmin&&<><TouchableOpacity style={styles.secondary} onPress={()=>editProduct(selected)}><Text>Edit product</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>deleteProduct(selected)}><Text style={{color:'#c62828'}}>Delete product</Text></TouchableOpacity></>}<Text style={styles.label}>Quantity to sell</Text><TextInput style={styles.input} keyboardType="number-pad" value={quantity} onChangeText={setQuantity}/><TouchableOpacity style={styles.primary} onPress={recordSale}><Text style={styles.primaryText}>Record sale</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setSelected(null)}><Text>Close</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
     <Modal visible={invoiceModal} animationType="slide" onRequestClose={()=>setInvoiceModal(false)}><SafeAreaView style={styles.modal}><ScrollView><Text style={styles.heading}>Create invoice</Text><Text style={styles.label}>Search customer</Text><TextInput style={styles.input} placeholder="Type customer name…" value={invoiceCustomerSearch} onChangeText={setInvoiceCustomerSearch}/>{invoiceCustomer ? <View style={[styles.line,styles.selectedLine]}><Text style={styles.flex}>Customer: {invoiceCustomer.name}</Text><TouchableOpacity onPress={()=>{setInvoiceCustomer(null);setInvoiceCustomerSearch('');}}><Text style={styles.link}>Change</Text></TouchableOpacity></View> : invoiceCustomerSearch.trim() ? customers.filter(x=>x.name.toLowerCase().includes(invoiceCustomerSearch.toLowerCase())).slice(0,8).map(x=><TouchableOpacity key={x.id} style={styles.line} onPress={()=>{setInvoiceCustomer(x);setInvoiceCustomerSearch(x.name);}}><Text style={styles.flex}>{x.name}</Text><Text style={styles.link}>Select</Text></TouchableOpacity>) : null}<Text style={styles.label}>Search product</Text><TextInput style={styles.input} placeholder="Type product name or SKU…" value={invoiceProductSearch} onChangeText={setInvoiceProductSearch}/>{invoiceProductSearch.trim() ? products.filter(x=>[x.name,x.sku].join(' ').toLowerCase().includes(invoiceProductSearch.toLowerCase())).slice(0,10).map(x=><TouchableOpacity key={x.id} style={[styles.line,invoiceProduct?.id===x.id&&styles.selectedLine]} onPress={()=>setInvoiceProduct(x)}><View style={styles.flex}><Text style={styles.productName}>{x.name}</Text><Text style={styles.note}>Stock: {x.stock} · {money(x.price)}</Text></View><Text style={styles.link}>{invoiceProduct?.id===x.id?'Selected':'Select'}</Text></TouchableOpacity>) : null}{invoiceProduct&&<View style={[styles.line,styles.selectedLine]}><Text style={styles.flex}>Selected: {invoiceProduct.name}</Text><TouchableOpacity onPress={()=>setInvoiceProduct(null)}><Text style={styles.link}>Change</Text></TouchableOpacity></View>}<TextInput style={styles.input} placeholder="Quantity" keyboardType="number-pad" value={invoiceQty} onChangeText={setInvoiceQty}/><TouchableOpacity style={styles.secondary} onPress={addInvoiceItem}><Text>Add selected product</Text></TouchableOpacity>{invoiceItems.map(x=><View key={x.product_id} style={styles.line}><Text style={styles.flex}>{x.name} × {x.quantity}</Text><Text>{money(x.price*x.quantity)}</Text><TouchableOpacity onPress={()=>setInvoiceItems(old=>old.filter(y=>y.product_id!==x.product_id))}><Text style={{color:'#c62828',paddingLeft:8}}>Remove</Text></TouchableOpacity></View>)}<View style={styles.line}><Text style={styles.flex}>Subtotal</Text><Text style={styles.price}>{money(invoiceSubtotal)}</Text></View><Text style={styles.label}>Discount (PHP)</Text><TextInput style={styles.input} keyboardType="decimal-pad" value={invoiceDiscount} onChangeText={setInvoiceDiscount}/><View style={styles.line}><Text style={styles.flex}>OVERALL TOTAL</Text><Text style={styles.metric}>{money(invoiceTotal)}</Text></View><Text style={styles.label}>Notes</Text><TextInput style={styles.input} value={invoiceNotes} onChangeText={setInvoiceNotes} multiline/><TouchableOpacity style={styles.primary} onPress={saveInvoice}><Text style={styles.primaryText}>Save invoice</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setInvoiceModal(false)}><Text>Cancel</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
     <Modal visible={!!invoiceDetail} animationType="slide" onRequestClose={()=>{setInvoiceDetail(null);setPaymentScreen(false);}}><SafeAreaView style={styles.modal}><ScrollView>
