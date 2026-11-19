@@ -56,7 +56,7 @@ begin
   if p_customer_id is null then
     raise exception 'Choose a customer for this invoice';
   end if;
-  if jsonb_typeof(p_items) <> 'array'
+  if p_items is null or jsonb_typeof(p_items) <> 'array'
      or jsonb_array_length(p_items) = 0 then
     raise exception 'Add at least one product to the invoice';
   end if;
