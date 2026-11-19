@@ -300,7 +300,30 @@ export default function App() {
         }
       } catch (error) {}
       const cached = await readCachedRecords(userId, cacheKey);
-      if (cached !== null) setter(cached);
+      if (cached !== null) {
+        let rows = cached;
+        const queued = await getPendingOperations(userId);
+        for (const operation of queued) {
+          if (operation.operation_type === 'rpc' && operation.table_name === 'create_invoice' && cacheKey === 'invoices') {
+            const localInvoice = operation.payload.localInvoice;
+            if (localInvoice && !rows.some(item => item.id === localInvoice.id)) rows = [localInvoice, ...rows];
+          } else if (operation.operation_type === 'rpc' && operation.table_name === 'create_booking' && cacheKey === 'bookings') {
+            const localBooking = operation.payload.localBooking;
+            if (localBooking && !rows.some(item => item.id === localBooking.id)) rows = [localBooking, ...rows];
+          } else if (operation.operation_type === 'rpc' && operation.table_name === 'record_sale' && cacheKey === 'sales') {
+            const localSale = operation.payload.localRecord;
+            if (localSale && !rows.some(item => item.id === localSale.id)) rows = [localSale, ...rows];
+          } else if (operation.table_name === cacheKey && operation.operation_type === 'upsert') {
+            const record = operation.payload.record;
+            rows = rows.some(item => item.id === operation.record_id)
+              ? rows.map(item => item.id === operation.record_id ? record : item)
+              : [...rows, record];
+          } else if (operation.table_name === cacheKey && operation.operation_type === 'delete') {
+            rows = rows.filter(item => item.id !== operation.record_id);
+          }
+        }
+        setter(rows);
+      }
     }
     await Promise.all([
       loadList(supabase.from('products').select('*').order('name'), 'products', setProducts),
