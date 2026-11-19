@@ -5,6 +5,7 @@ import Svg, { Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import * as Print from 'expo-print';
 import { supabase, supabaseConfigured } from './src/supabase';
+import { saveCachedRecords, readCachedRecords, getNetworkStatus, subscribeToNetworkChanges } from './src/offlineStore';
 
 const money = n => '₱' + Number(n || 0).toFixed(2);
 
@@ -32,6 +33,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(true);
   const [tab, setTab] = useState('Home');
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
@@ -120,6 +122,15 @@ export default function App() {
 
   useEffect(() => { if (session && profile) refresh(); }, [session, profile, tab]);
 
+  useEffect(() => {
+    getNetworkStatus().then(setIsOnline).catch(() => setIsOnline(false));
+    const subscription = subscribeToNetworkChanges(online => {
+      setIsOnline(online);
+      if (online && session && profile) refresh();
+    });
+    return () => subscription.remove();
+  }, [session, profile]);
+
   // Keep every signed-in screen in sync with changes made by other users.
   useEffect(() => {
     if (!session || !profile) return;
@@ -140,27 +151,45 @@ export default function App() {
 
   async function loadProfile(id) {
     const {data, error} = await supabase.from('profiles').select('*').eq('id', id).single();
-    if (error) Alert.alert('Profile issue', 'Your profile was not found. Ask the administrator to create your profile.');
-    setProfile(data || null); setLoading(false);
+    if (!error && data) {
+      setProfile(data);
+      await saveCachedRecords(id, 'profile', data);
+    } else {
+      const cached = await readCachedRecords(id, 'profile');
+      if (cached) setProfile(cached);
+      else Alert.alert('Profile issue', 'Your profile is not available on this device. Connect to the internet and sign in again.');
+    }
+    setLoading(false);
   }
 
   async function refresh() {
-    const p = await supabase.from('products').select('*').order('name');
-    if (!p.error) setProducts(p.data || []);
-    const s = await supabase.from('sales').select('*, products(name)').order('created_at', {ascending:false}).limit(100);
-    if (!s.error) setSales(s.data || []);
-    const c = await supabase.from('customers').select('*').order('name');
-    if (!c.error) setCustomers(c.data || []);
-    const inv = await supabase.from('invoices').select('*, customers(name,address)').order('created_at', {ascending:false}).limit(100);
-    const b = await supabase.from('bookings').select('*, customers(name)').order('created_at', {ascending:false}).limit(200);
-    if (!b.error) setBookings(b.data || []);
-
-    if (!inv.error) setInvoices(inv.data || []);
+    if (!session?.user?.id) return;
+    const userId = session.user.id;
+    async function loadList(query, cacheKey, setter) {
+      try {
+        const result = await query;
+        if (!result.error) {
+          const rows = result.data || [];
+          setter(rows);
+          await saveCachedRecords(userId, cacheKey, rows);
+          return;
+        }
+      } catch (error) {}
+      const cached = await readCachedRecords(userId, cacheKey);
+      if (cached !== null) setter(cached);
+    }
+    await Promise.all([
+      loadList(supabase.from('products').select('*').order('name'), 'products', setProducts),
+      loadList(supabase.from('sales').select('*, products(name)').order('created_at', {ascending:false}).limit(100), 'sales', setSales),
+      loadList(supabase.from('customers').select('*').order('name'), 'customers', setCustomers),
+      loadList(supabase.from('invoices').select('*, customers(name,address)').order('created_at', {ascending:false}).limit(100), 'invoices', setInvoices),
+      loadList(supabase.from('bookings').select('*, customers(name)').order('created_at', {ascending:false}).limit(200), 'bookings', setBookings)
+    ]);
     if (isAdmin) {
-      const v = await supabase.from('vendors').select('*').order('name');
-      if (!v.error) setVendors(v.data || []);
-      const e = await supabase.from('expenses').select('*').order('created_at', {ascending:false}).limit(100);
-      if (!e.error) setExpenses(e.data || []);
+      await Promise.all([
+        loadList(supabase.from('vendors').select('*').order('name'), 'vendors', setVendors),
+        loadList(supabase.from('expenses').select('*').order('created_at', {ascending:false}).limit(100), 'expenses', setExpenses)
+      ]);
     }
   }
 
@@ -257,6 +286,13 @@ export default function App() {
     Alert.alert('Sale recorded', 'Stock has been updated.');
   }
   async function addExpense() {
+    const amount = Number(expenseAmount);
+    if (!expenseText.trim() || !Number.isFinite(amount) || amount <= 0) return Alert.alert('Check details', 'Enter an expense description and a valid amount.');
+    const {error} = await supabase.from('expenses').insert({description:expenseText.trim(), amount, created_by:session.user.id});
+    if (error) return Alert.alert('Could not save expense', error.message);
+    setExpenseText(''); setExpenseAmount(''); refresh();
+  }
+
   function newBooking() {
     setBookingCustomer(null); setBookingCustomerSearch(''); setBookingProductSearch('');
     setBookingProduct(null); setBookingQty('1'); setBookingItems([]); setBookingNotes('');
@@ -297,13 +333,6 @@ export default function App() {
     if (error) return Alert.alert('Could not update order', error.message);
     const {data} = await supabase.from('bookings').select('*, customers(name)').eq('id', item.id).single();
     await refresh(); if (data) await openBooking(data);
-  }
-
-    const amount = Number(expenseAmount);
-    if (!expenseText.trim() || !Number.isFinite(amount) || amount <= 0) return Alert.alert('Check details', 'Enter an expense description and a valid amount.');
-    const {error} = await supabase.from('expenses').insert({description:expenseText.trim(), amount, created_by:session.user.id});
-    if (error) return Alert.alert('Could not save expense', error.message);
-    setExpenseText(''); setExpenseAmount(''); refresh();
   }
 
   function newInvoice() {
@@ -487,7 +516,7 @@ export default function App() {
   const invoiceDetailDiscount = Number(invoiceDetail?.discount || 0);
   const invoiceDetailTotal = Math.max(0, invoiceDetailSubtotal - invoiceDetailDiscount);
 
-  return <SafeAreaView style={styles.page}><StatusBar style="dark"/><View style={styles.header}><View><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>{profile.full_name || profile.role}</Text></View><TouchableOpacity onPress={signOut}><Text style={styles.link}>Sign out</Text></TouchableOpacity></View>
+  return <SafeAreaView style={styles.page}><StatusBar style="dark"/><View style={styles.header}><View><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>{profile.full_name || profile.role}</Text>{!isOnline&&<Text style={styles.note}>Offline · showing saved records</Text>}</View><TouchableOpacity onPress={signOut}><Text style={styles.link}>Sign out</Text></TouchableOpacity></View>
     {tab!=='Home'&&<TouchableOpacity style={styles.homeLink} onPress={()=>setTab('Home')}><Text style={styles.link}>‹ Home</Text></TouchableOpacity>}
     {tab==='Home'&&<View style={styles.dashboard}>
       {[
@@ -516,8 +545,7 @@ export default function App() {
     {tab==='Billing'&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Search invoice number or customer…" value={billingSearch} onChangeText={setBillingSearch}/><TouchableOpacity style={styles.primary} onPress={newInvoice}><Text style={styles.primaryText}>+ Create invoice</Text></TouchableOpacity><FlatList data={invoices.filter(x=>[x.invoice_number,x.customers?.name,x.payment_status].join(' ').toLowerCase().includes(billingSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No matching invoices.</Text>} renderItem={({item})=><TouchableOpacity style={styles.line} onPress={()=>openInvoice(item)}><View style={styles.flex}><Text style={styles.productName}>{item.invoice_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{item.payment_status} · Balance: {money(item.balance)}</Text></View><Text style={styles.price}>{money(item.total)}</Text></TouchableOpacity>}/></View>}
     {tab==='Vendors'&&isAdmin&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Search vendor or contact…" value={vendorSearch} onChangeText={setVendorSearch}/><TouchableOpacity style={styles.primary} onPress={newVendor}><Text style={styles.primaryText}>+ Add vendor</Text></TouchableOpacity><FlatList data={vendors.filter(x=>[x.name,x.contact_person,x.phone,x.email].join(' ').toLowerCase().includes(vendorSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No vendors yet.</Text>} renderItem={({item})=><View style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{item.name}</Text><Text style={styles.note}>{item.contact_person || 'No contact person'} {item.phone ? '· '+item.phone : ''}</Text>{item.email ? <Text style={styles.note}>{item.email}</Text> : null}{item.address ? <Text style={styles.note}>{item.address}</Text> : null}</View><View><TouchableOpacity onPress={()=>editVendor(item)}><Text style={styles.link}>Edit</Text></TouchableOpacity><TouchableOpacity onPress={()=>deleteVendor(item)}><Text style={{color:'#c62828',padding:8}}>Delete</Text></TouchableOpacity></View></View>}/></View>}
     {tab==='Customers' && <View style={styles.flex}>
-      {selectedCustomerHistory ? <>
-        <TouchableOpacity style={styles.secondary} onPress={()=>setSelectedCustomerHistory(null)}><Text>← Back to customers</Text></TouchableOpacity>
+      {selectedCustomerHistory ? <>        <TouchableOpacity style={styles.secondary} onPress={()=>setSelectedCustomerHistory(null)}><Text>← Back to customers</Text></TouchableOpacity>
         <Text style={styles.heading}>{selectedCustomerHistory.name}</Text>
         <Text style={styles.note}>{selectedCustomerHistory.phone || ''} {selectedCustomerHistory.address || ''}</Text>
         <Text style={styles.label}>Transaction history · Invoices</Text>
