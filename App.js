@@ -550,16 +550,37 @@ export default function App() {
   }
   async function openInvoice(item) {
     setInvoiceDetail(item); setPaymentAmount(''); setPaymentMethod('CASH'); setPaymentReference(''); setSignaturePath(''); setPaymentScreen(false);
-    const [lines, pays] = await Promise.all([
-      supabase.from('invoice_items').select('*').eq('invoice_id', item.id).order('id'),
-      supabase.from('payments').select('*').eq('invoice_id', item.id).order('created_at', {ascending:false})
+    const linesKey='invoice_items_'+item.id;
+    const paymentsKey='invoice_payments_'+item.id;
+    const online=await getNetworkStatus();
+    if (online) {
+      const [lines,pays]=await Promise.all([
+        supabase.from('invoice_items').select('*').eq('invoice_id',item.id).order('id'),
+        supabase.from('payments').select('*').eq('invoice_id',item.id).order('created_at',{ascending:false})
+      ]);
+      if(!lines.error && !pays.error) {
+        setInvoiceLines(lines.data||[]); setInvoicePayments(pays.data||[]);
+        await Promise.all([
+          saveCachedRecords(session.user.id,linesKey,lines.data||[]),
+          saveCachedRecords(session.user.id,paymentsKey,pays.data||[])
+        ]);
+        await saveCachedRecords(session.user.id,'invoice_detail_'+item.id,item);
+        return;
+      }
+    }
+    const [cachedLines,cachedPayments,cachedInvoice]=await Promise.all([
+      readCachedRecords(session.user.id,linesKey),
+      readCachedRecords(session.user.id,paymentsKey),
+      readCachedRecords(session.user.id,'invoice_detail_'+item.id)
     ]);
-    if (lines.error) Alert.alert('Could not load invoice items', lines.error.message);
-    if (pays.error) Alert.alert('Could not load payment history', pays.error.message);
-    setInvoiceLines(lines.data || []); setInvoicePayments(pays.data || []);
+    setInvoiceLines(cachedLines||[]);
+    setInvoicePayments(cachedPayments||[]);
+    if(cachedInvoice) setInvoiceDetail(cachedInvoice);
+    if(cachedLines===null || cachedPayments===null) Alert.alert('Some invoice details are unavailable offline','Open this invoice while online once to save its items and payment history on this device.');
   }
   async function confirmInvoice() {
     if (!invoiceDetail) return;
+    if (!(await getNetworkStatus())) return Alert.alert('Internet required','The invoice signature and confirmation must be submitted online. Your invoice remains unchanged.');
     if (!signaturePath.trim()) return Alert.alert('Customer signature needed', 'Ask the customer to sign in the signature box first.');
     const {error} = await supabase.from('invoices').update({customer_signature:signaturePath, confirmed_at:new Date().toISOString(), confirmed_by:session.user.id}).eq('id', invoiceDetail.id);
     if (error) return Alert.alert('Could not confirm invoice', error.message);
@@ -577,6 +598,7 @@ export default function App() {
   }
   async function submitInvoicePayment(receivedOverride) {
     if (paymentBusy) return;
+    if (!(await getNetworkStatus())) { setPaymentError('Internet connection required. No payment has been recorded.'); return; }
     setPaymentError('');
     const balance = Number(invoiceDetail?.balance || 0);
     const received = receivedOverride !== undefined ? Number(receivedOverride) : (paymentMethod === 'CASH' ? Number(cashReceived || 0) : Number(paymentAmount || 0));
