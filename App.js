@@ -200,6 +200,16 @@ export default function App() {
             await removePendingOperation(operation.id);
             continue;
           }
+          if (operation.operation_type === 'rpc' && operation.table_name === 'record_invoice_payment') {
+            const {data: paymentId, error} = await supabase.rpc('record_invoice_payment_idempotent', operation.payload.rpcPayload);
+            if (error) throw error;
+            if (operation.payload.details) {
+              const {error: detailError} = await supabase.from('payments').update(operation.payload.details).eq('id',paymentId);
+              if (detailError) throw detailError;
+            }
+            await removePendingOperation(operation.id);
+            continue;
+          }
           const {data: remote, error: readError} = await supabase.from(operation.table_name).select('*').eq('id', operation.record_id).maybeSingle();
           if (readError) throw readError;
           if (operation.operation_type === 'upsert') {
@@ -639,7 +649,6 @@ export default function App() {
   }
   async function submitInvoicePayment(receivedOverride) {
     if (paymentBusy) return;
-    if (!(await getNetworkStatus())) { setPaymentError('Internet connection required. No payment has been recorded.'); return; }
     setPaymentError('');
     const balance = Number(invoiceDetail?.balance || 0);
     const received = receivedOverride !== undefined ? Number(receivedOverride) : (paymentMethod === 'CASH' ? Number(cashReceived || 0) : Number(paymentAmount || 0));
@@ -649,11 +658,24 @@ export default function App() {
     if (paymentMethod === 'GCASH' && (!gcashSenderName.trim() || !gcashSenderNumber.trim() || !gcashReceiverNumber.trim() || !gcashReference.trim())) { setPaymentError('Complete the sender name, sender number, receiver number, and reference number.'); return; }
     setPaymentBusy(true);
     try {
-      const {data: paymentId, error} = await supabase.rpc('record_invoice_payment', {p_invoice_id:invoiceDetail.id, p_amount:balance, p_payment_method:paymentMethod, p_reference_number:paymentMethod==='GCASH'?gcashReference.trim():null});
-      if (error) throw error;
+      const requestId=makeLocalId();
+      const rpcPayload={p_client_request_id:requestId,p_invoice_id:invoiceDetail.id,p_amount:balance,p_payment_method:paymentMethod,p_reference_number:paymentMethod==='GCASH'?gcashReference.trim():null};
       const details = paymentMethod === 'CASH'
         ? {cash_denominations:cashCounts, cash_received:received, cash_change:Math.max(0,received-balance)}
         : {gcash_sender_name:gcashSenderName.trim(),gcash_sender_number:gcashSenderNumber.trim(),gcash_receiver_number:gcashReceiverNumber.trim()};
+      if (!(await getNetworkStatus())) {
+        const localPayment={id:requestId,invoice_id:invoiceDetail.id,amount:balance,payment_method:paymentMethod,reference_number:rpcPayload.p_reference_number,created_at:new Date().toISOString(),...details,pending_sync:true};
+        const nextPayments=[localPayment,...invoicePayments];
+        await addPendingOperation(session.user.id,{type:'rpc',table:'record_invoice_payment',recordId:requestId,payload:{rpcPayload,details}});
+        setInvoicePayments(nextPayments);
+        await saveCachedRecords(session.user.id,'invoice_payments_'+invoiceDetail.id,nextPayments);
+        await updatePendingCount();
+        setPaymentScreen(false); setPaymentBusy(false);
+        Alert.alert('Payment saved on this device','This payment is waiting to sync. The server will verify the invoice balance when internet returns.');
+        return;
+      }
+      const {data: paymentId, error} = await supabase.rpc('record_invoice_payment_idempotent', rpcPayload);
+      if (error) throw error;
       const {error: detailError} = await supabase.from('payments').update(details).eq('id',paymentId);
       if (detailError) throw detailError;
       const {data, error: invoiceRefreshError} = await supabase.from('invoices').select('*, customers(name,address)').eq('id',invoiceDetail.id).single();
@@ -677,7 +699,20 @@ export default function App() {
   async function saveInvoicePayment() {
     const amount = Number(paymentAmount);
     if (!Number.isFinite(amount) || amount <= 0) return Alert.alert('Invalid payment', 'Enter a payment amount greater than zero.');
-    const {error} = await supabase.rpc('record_invoice_payment', {p_invoice_id:invoiceDetail.id, p_amount:amount, p_payment_method:paymentMethod, p_reference_number:paymentReference || null});
+    const requestId=makeLocalId();
+    const rpcPayload={p_client_request_id:requestId,p_invoice_id:invoiceDetail.id,p_amount:amount,p_payment_method:paymentMethod,p_reference_number:paymentReference || null};
+    if (!(await getNetworkStatus())) {
+      const localPayment={id:requestId,invoice_id:invoiceDetail.id,amount,payment_method:paymentMethod,reference_number:paymentReference || null,created_at:new Date().toISOString(),pending_sync:true};
+      const nextPayments=[localPayment,...invoicePayments];
+      await addPendingOperation(session.user.id,{type:'rpc',table:'record_invoice_payment',recordId:requestId,payload:{rpcPayload,details:null}});
+      setInvoicePayments(nextPayments);
+      await saveCachedRecords(session.user.id,'invoice_payments_'+invoiceDetail.id,nextPayments);
+      await updatePendingCount();
+      setPaymentAmount('');
+      Alert.alert('Payment saved on this device','This payment is waiting to sync. The server will verify the invoice balance when internet returns.');
+      return;
+    }
+    const {error} = await supabase.rpc('record_invoice_payment_idempotent', rpcPayload);
     if (error) return Alert.alert('Payment not recorded', error.message);
     setPaymentAmount(''); refresh();
     const {data} = await supabase.from('invoices').select('*, customers(name,address)').eq('id', invoiceDetail.id).single();
