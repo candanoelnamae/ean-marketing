@@ -188,6 +188,12 @@ export default function App() {
       const queued = await getPendingOperations(session.user.id);
       for (const operation of queued) {
         try {
+          if (operation.operation_type === 'rpc' && operation.table_name === 'create_booking') {
+            const {error} = await supabase.rpc('create_booking', operation.payload);
+            if (error) throw error;
+            await removePendingOperation(operation.id);
+            continue;
+          }
           const {data: remote, error: readError} = await supabase.from(operation.table_name).select('*').eq('id', operation.record_id).maybeSingle();
           if (readError) throw readError;
           if (operation.operation_type === 'upsert') {
@@ -415,11 +421,47 @@ export default function App() {
   async function saveBooking() {
     if (!bookingCustomer) return Alert.alert('Choose a customer', 'Select a customer for this order.');
     if (!bookingItems.length) return Alert.alert('Add products', 'Add at least one product to the order.');
-    const {data, error} = await supabase.rpc('create_booking', {
+    const clientRequestId = makeLocalId();
+    const rpcPayload = {
       p_customer_id:bookingCustomer.id,
       p_items:bookingItems.map(x=>({product_id:x.product_id, quantity:x.quantity})),
-      p_notes:bookingNotes || null
-    });
+      p_notes:bookingNotes || null,
+      p_client_request_id:clientRequestId
+    };
+    const online = await getNetworkStatus();
+    if (!online) {
+      const localItems = bookingItems.map(x => {
+        const product = products.find(p => p.id === x.product_id);
+        const cost = Number(product?.cost || 0);
+        return {
+          id:makeLocalId(), booking_id:clientRequestId, product_id:x.product_id,
+          product_name:x.name, quantity:x.quantity, selling_price:Number(x.price || 0),
+          cost_price:cost, selling_subtotal:Number(x.price || 0)*x.quantity,
+          cost_subtotal:cost*x.quantity
+        };
+      });
+      const localBooking = {
+        id:clientRequestId, client_request_id:clientRequestId,
+        reference_number:'PENDING-' + clientRequestId.slice(0,8).toUpperCase(),
+        customer_id:bookingCustomer.id, customers:{name:bookingCustomer.name},
+        status:'PENDING', total_selling:localItems.reduce((n,x)=>n+x.selling_subtotal,0),
+        total_cost:localItems.reduce((n,x)=>n+x.cost_subtotal,0),
+        notes:bookingNotes || null, created_at:new Date().toISOString(),
+        created_by:session.user.id, created_by_name:profile?.full_name || '',
+        is_offline_pending:true, local_items:localItems
+      };
+      await addPendingOperation(session.user.id, {
+        type:'rpc', table:'create_booking', recordId:clientRequestId, payload:rpcPayload
+      });
+      const next = [localBooking, ...bookings];
+      setBookings(next); await saveCachedRecords(session.user.id, 'bookings', next);
+      await updatePendingCount();
+      setBookingModal(false);
+      setBookingDetail(localBooking); setBookingDetailItems(localItems);
+      Alert.alert('Order saved on this device', 'This order has a temporary reference until it syncs. Its permanent order number will be assigned by the server.');
+      return;
+    }
+    const {data, error} = await supabase.rpc('create_booking', rpcPayload);
     if (error) return Alert.alert('Order not created', error.message);
     setBookingModal(false); await refresh();
     const {data:saved, error:loadError} = await supabase.from('bookings').select('*, customers(name)').eq('id', data).single();
@@ -428,6 +470,10 @@ export default function App() {
   }
   async function openBooking(item) {
     setBookingDetail(item);
+    if (item.is_offline_pending && Array.isArray(item.local_items)) {
+      setBookingDetailItems(item.local_items);
+      return;
+    }
     const {data, error} = await supabase.from('booking_items').select('*').eq('booking_id', item.id).order('created_at');
     if (error) Alert.alert('Could not load order items', error.message);
     setBookingDetailItems(data || []);
