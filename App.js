@@ -86,6 +86,19 @@ export default function App() {
   const [form, setForm] = useState({name:'', sku:'', category:'', description:'', price:'', cost:'', stock:''});
   const [expenseText, setExpenseText] = useState('');
   const [expenseAmount, setExpenseAmount] = useState('');
+  const [bookings, setBookings] = useState([]);
+  const [bookingModal, setBookingModal] = useState(false);
+  const [bookingCustomer, setBookingCustomer] = useState(null);
+  const [bookingCustomerSearch, setBookingCustomerSearch] = useState('');
+  const [bookingProductSearch, setBookingProductSearch] = useState('');
+  const [bookingProduct, setBookingProduct] = useState(null);
+  const [bookingQty, setBookingQty] = useState('1');
+  const [bookingItems, setBookingItems] = useState([]);
+  const [bookingNotes, setBookingNotes] = useState('');
+  const [bookingSearch, setBookingSearch] = useState('');
+  const [bookingDetail, setBookingDetail] = useState(null);
+  const [bookingDetailItems, setBookingDetailItems] = useState([]);
+
 
   const isAdmin = profile?.role === 'ADMIN';
   const canAddProducts = Boolean(profile);
@@ -138,7 +151,9 @@ export default function App() {
     if (!s.error) setSales(s.data || []);
     const c = await supabase.from('customers').select('*').order('name');
     if (!c.error) setCustomers(c.data || []);
-    const inv = await supabase.from('invoices').select('*, customers(name,address)').order('created_at', {ascending:false}).limit(100);
+    const inv = await supabase.from('invoices').select('*, customers(name,address)').order('created_at', {ascending:false}).limit(100);    const b = await supabase.from('bookings').select('*, customers(name)').order('created_at', {ascending:false}).limit(200);
+    if (!b.error) setBookings(b.data || []);
+
     if (!inv.error) setInvoices(inv.data || []);
     if (isAdmin) {
       const v = await supabase.from('vendors').select('*').order('name');
@@ -241,6 +256,48 @@ export default function App() {
     Alert.alert('Sale recorded', 'Stock has been updated.');
   }
   async function addExpense() {
+  function newBooking() {
+    setBookingCustomer(null); setBookingCustomerSearch(''); setBookingProductSearch('');
+    setBookingProduct(null); setBookingQty('1'); setBookingItems([]); setBookingNotes('');
+    setBookingModal(true);
+  }
+  function addBookingItem() {
+    const qty = parseInt(bookingQty, 10);
+    if (!bookingProduct) return Alert.alert('Choose a product', 'Select a product first.');
+    if (!Number.isInteger(qty) || qty < 1) return Alert.alert('Invalid quantity', 'Enter a quantity of at least 1.');
+    const existing = bookingItems.find(x => x.product_id === bookingProduct.id);
+    setBookingItems(old => existing
+      ? old.map(x => x.product_id === bookingProduct.id ? {...x, quantity:x.quantity + qty} : x)
+      : [...old, {product_id:bookingProduct.id, name:bookingProduct.name, quantity:qty, price:Number(bookingProduct.price || 0)}]);
+    setBookingProduct(null); setBookingQty('1');
+  }
+  async function saveBooking() {
+    if (!bookingCustomer) return Alert.alert('Choose a customer', 'Select a customer for this order.');
+    if (!bookingItems.length) return Alert.alert('Add products', 'Add at least one product to the order.');
+    const {data, error} = await supabase.rpc('create_booking', {
+      p_customer_id:bookingCustomer.id,
+      p_items:bookingItems.map(x=>({product_id:x.product_id, quantity:x.quantity})),
+      p_notes:bookingNotes || null
+    });
+    if (error) return Alert.alert('Order not created', error.message);
+    setBookingModal(false); await refresh();
+    const {data:saved, error:loadError} = await supabase.from('bookings').select('*, customers(name)').eq('id', data).single();
+    if (loadError || !saved) return Alert.alert('Order saved', 'Your order was saved, but its details could not be opened.');
+    await openBooking(saved);
+  }
+  async function openBooking(item) {
+    setBookingDetail(item);
+    const {data, error} = await supabase.from('booking_items').select('*').eq('booking_id', item.id).order('created_at');
+    if (error) Alert.alert('Could not load order items', error.message);
+    setBookingDetailItems(data || []);
+  }
+  async function updateBookingStatus(item, status) {
+    const {error} = await supabase.from('bookings').update({status}).eq('id', item.id);
+    if (error) return Alert.alert('Could not update order', error.message);
+    const {data} = await supabase.from('bookings').select('*, customers(name)').eq('id', item.id).single();
+    await refresh(); if (data) await openBooking(data);
+  }
+
     const amount = Number(expenseAmount);
     if (!expenseText.trim() || !Number.isFinite(amount) || amount <= 0) return Alert.alert('Check details', 'Enter an expense description and a valid amount.');
     const {error} = await supabase.from('expenses').insert({description:expenseText.trim(), amount, created_by:session.user.id});
@@ -440,7 +497,19 @@ export default function App() {
         <Text style={styles.featureIcon}>{symbol}</Text><Text style={styles.featureName}>{name}</Text>
       </TouchableOpacity>)}
     </View>}
-    {['Orders','Booking Search','Settings'].includes(tab)&&<View style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{tab==='Orders'?'Booking / Orders':tab==='Booking Search'?'Booking Reference Search':'Admin Settings'}</Text><Text style={styles.note}>This section needs its database and secure account-management setup before it can be enabled. Existing records and account permissions have not been changed.</Text></View></View>}
+    {tab==='Orders'&&<View style={styles.flex}>
+      <TouchableOpacity style={styles.primary} onPress={newBooking}><Text style={styles.primaryText}>+ Create booking / order</Text></TouchableOpacity>
+      <FlatList data={bookings} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No bookings yet.</Text>} renderItem={({item})=><TouchableOpacity style={styles.line} onPress={()=>openBooking(item)}>
+        <View style={styles.flex}><Text style={styles.productName}>{item.reference_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{item.status} · {money(item.total_selling)}</Text></View>
+      </TouchableOpacity>}/>
+    </View>}
+    {tab==='Booking Search'&&<View style={styles.flex}>
+      <TextInput style={styles.input} placeholder="Enter booking reference (e.g. ORD-000001)" autoCapitalize="characters" value={bookingSearch} onChangeText={setBookingSearch}/>
+      <FlatList data={bookings.filter(x=>(x.reference_number || '').toLowerCase().includes(bookingSearch.trim().toLowerCase()))} keyExtractor={x=>x.id} ListEmptyComponent={<Text style={styles.note}>{bookingSearch.trim()?'No matching booking reference.':'Enter a reference number to search.'}</Text>} renderItem={({item})=><TouchableOpacity style={styles.line} onPress={()=>openBooking(item)}>
+        <View style={styles.flex}><Text style={styles.productName}>{item.reference_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text></View><Text style={styles.link}>View</Text>
+      </TouchableOpacity>}/>
+    </View>}
+    {tab==='Settings'&&<View style={styles.line}><View style={styles.flex}><Text style={styles.productName}>Admin Settings</Text><Text style={styles.note}>User management and access controls are not enabled yet.</Text></View></View>}
     {tab==='Products' && <View style={styles.flex}><TextInput style={styles.input} placeholder="Search name, SKU, category…" value={search} onChangeText={setSearch}/>{canAddProducts&&<TouchableOpacity style={styles.primary} onPress={newProduct}><Text style={styles.primaryText}>+ Add product</Text></TouchableOpacity>}<FlatList data={filtered} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No products yet.</Text>} renderItem={({item})=><TouchableOpacity style={styles.product} onPress={()=>{setSelected(item);setQuantity('1')}}>{item.image_url?<Image source={{uri:item.image_url}} style={styles.thumb}/>:<View style={styles.thumbPlaceholder}><Text>Photo</Text></View>}<View style={styles.flex}><Text style={styles.productName}>{item.name}</Text><Text style={styles.note}>{item.sku || item.category || 'No SKU'} · Stock: {item.stock}</Text><Text style={styles.price}>{money(item.price)}</Text></View></TouchableOpacity>}/></View>}
     {tab==='Sales' && <FlatList data={sales} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No sales recorded yet.</Text>} renderItem={({item})=><View style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{item.products?.name || 'Product'}</Text><Text style={styles.note}>Qty: {item.quantity} · {new Date(item.created_at).toLocaleString()}</Text></View><Text style={styles.price}>{money(item.total_amount)}</Text></View>}/>}
     {tab==='Billing'&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Search invoice number or customer…" value={billingSearch} onChangeText={setBillingSearch}/><TouchableOpacity style={styles.primary} onPress={newInvoice}><Text style={styles.primaryText}>+ Create invoice</Text></TouchableOpacity><FlatList data={invoices.filter(x=>[x.invoice_number,x.customers?.name,x.payment_status].join(' ').toLowerCase().includes(billingSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No matching invoices.</Text>} renderItem={({item})=><TouchableOpacity style={styles.line} onPress={()=>openInvoice(item)}><View style={styles.flex}><Text style={styles.productName}>{item.invoice_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{item.payment_status} · Balance: {money(item.balance)}</Text></View><Text style={styles.price}>{money(item.total)}</Text></TouchableOpacity>}/></View>}
@@ -522,6 +591,28 @@ export default function App() {
     <Modal visible={vendorModal} animationType="slide" onRequestClose={()=>setVendorModal(false)}><SafeAreaView style={styles.modal}><ScrollView><Text style={styles.heading}>{editingVendor?'Edit vendor':'Add vendor'}</Text>{[['name','Vendor / company name'],['contact_person','Contact person'],['phone','Phone'],['email','Email'],['address','Address'],['notes','Notes']].map(([k,label])=><TextInput key={k} style={styles.input} placeholder={label} value={vendorForm[k]} onChangeText={v=>setVendorForm(old=>({...old,[k]:v}))} multiline={k==='address'||k==='notes'}/>)}<TouchableOpacity style={styles.primary} onPress={saveVendor}><Text style={styles.primaryText}>Save vendor</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setVendorModal(false)}><Text>Cancel</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
     <Modal visible={customerModal} animationType="slide" onRequestClose={()=>setCustomerModal(false)}><SafeAreaView style={styles.modal}><ScrollView><Text style={styles.heading}>{editingCustomer?'Edit customer':'Add customer'}</Text>{[['name','Customer name'],['phone','Phone'],['email','Email'],['address','Address'],['notes','Notes']].map(([k,label])=><TextInput key={k} style={styles.input} placeholder={label} value={customerForm[k]} onChangeText={v=>setCustomerForm(old=>({...old,[k]:v}))} multiline={k==='address'||k==='notes'}/>)}<TouchableOpacity style={styles.primary} onPress={saveCustomer}><Text style={styles.primaryText}>Save customer</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setCustomerModal(false)}><Text>Cancel</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
     <Modal visible={edit} animationType="slide" onRequestClose={()=>setEdit(false)}><SafeAreaView style={styles.modal}><ScrollView><Text style={styles.heading}>{selected?'Edit product':'Add product'}</Text>{[['name','Product name'],['sku','SKU'],['category','Category'],['description','Description'],['price','Selling price'],['cost','Cost'],['stock','Stock quantity']].map(([k,label])=><TextInput key={k} style={styles.input} placeholder={label} value={form[k]} onChangeText={v=>setForm(old=>({...old,[k]:v}))} keyboardType={['price','cost','stock'].includes(k)?'decimal-pad':'default'}/>)}<TouchableOpacity style={styles.secondary} onPress={choosePhoto}><Text>Choose product photo</Text></TouchableOpacity>{form.image_url&&<Image source={{uri:form.image_url}} style={styles.thumb}/>}<TouchableOpacity style={styles.primary} onPress={saveProduct}><Text style={styles.primaryText}>Save product</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setEdit(false)}><Text>Cancel</Text></TouchableOpacity></ScrollView></SafeAreaView></Modal>
+    <Modal visible={bookingModal} animationType="slide" onRequestClose={()=>setBookingModal(false)}><SafeAreaView style={styles.modal}><ScrollView>
+      <Text style={styles.heading}>Create booking / order</Text>
+      <Text style={styles.label}>Select customer</Text><TextInput style={styles.input} placeholder="Search customer name…" value={bookingCustomerSearch} onChangeText={setBookingCustomerSearch}/>
+      {bookingCustomer ? <View style={[styles.line,styles.selectedLine]}><Text style={styles.flex}>Customer: {bookingCustomer.name}</Text><TouchableOpacity onPress={()=>{setBookingCustomer(null);setBookingCustomerSearch('');}}><Text style={styles.link}>Change</Text></TouchableOpacity></View> : bookingCustomerSearch.trim() ? customers.filter(x=>x.name.toLowerCase().includes(bookingCustomerSearch.toLowerCase())).slice(0,8).map(x=><TouchableOpacity key={x.id} style={styles.line} onPress={()=>{setBookingCustomer(x);setBookingCustomerSearch(x.name);}}><Text style={styles.flex}>{x.name}</Text><Text style={styles.link}>Select</Text></TouchableOpacity>) : null}
+      <Text style={styles.label}>Select product</Text><TextInput style={styles.input} placeholder="Search product name or SKU…" value={bookingProductSearch} onChangeText={setBookingProductSearch}/>
+      {bookingProductSearch.trim() ? products.filter(x=>[x.name,x.sku].join(' ').toLowerCase().includes(bookingProductSearch.toLowerCase())).slice(0,10).map(x=><TouchableOpacity key={x.id} style={[styles.line,bookingProduct?.id===x.id&&styles.selectedLine]} onPress={()=>setBookingProduct(x)}><View style={styles.flex}><Text style={styles.productName}>{x.name}</Text><Text style={styles.note}>Selling price: {money(x.price)} · Stock: {x.stock}</Text></View><Text style={styles.link}>{bookingProduct?.id===x.id?'Selected':'Select'}</Text></TouchableOpacity>) : null}
+      {bookingProduct&&<View style={[styles.line,styles.selectedLine]}><Text style={styles.flex}>Selected: {bookingProduct.name}</Text><TouchableOpacity onPress={()=>setBookingProduct(null)}><Text style={styles.link}>Change</Text></TouchableOpacity></View>}
+      <TextInput style={styles.input} placeholder="Quantity" keyboardType="number-pad" value={bookingQty} onChangeText={setBookingQty}/><TouchableOpacity style={styles.secondary} onPress={addBookingItem}><Text>Add selected product</Text></TouchableOpacity>
+      {bookingItems.map(x=><View key={x.product_id} style={styles.line}><Text style={styles.flex}>{x.name} × {x.quantity}</Text><Text>{money(x.price*x.quantity)}</Text><TouchableOpacity onPress={()=>setBookingItems(old=>old.filter(y=>y.product_id!==x.product_id))}><Text style={{color:'#c62828',paddingLeft:8}}>Remove</Text></TouchableOpacity></View>)}
+      <View style={styles.line}><Text style={styles.flex}>Selling total</Text><Text style={styles.price}>{money(bookingItems.reduce((sum,x)=>sum+x.price*x.quantity,0))}</Text></View>
+      <Text style={styles.note}>Cost prices are saved as snapshots when the order is created.</Text><Text style={styles.label}>Notes (optional)</Text><TextInput style={styles.input} value={bookingNotes} onChangeText={setBookingNotes} multiline/>
+      <TouchableOpacity style={styles.primary} onPress={saveBooking}><Text style={styles.primaryText}>Save booking / order</Text></TouchableOpacity><TouchableOpacity style={styles.secondary} onPress={()=>setBookingModal(false)}><Text>Cancel</Text></TouchableOpacity>
+    </ScrollView></SafeAreaView></Modal>
+    <Modal visible={!!bookingDetail} animationType="slide" onRequestClose={()=>setBookingDetail(null)}><SafeAreaView style={styles.modal}><ScrollView>
+      <Text style={styles.heading}>{bookingDetail?.reference_number}</Text><Text style={styles.note}>Customer: {bookingDetail?.customers?.name || 'Customer'}</Text><Text style={styles.note}>Order date: {bookingDetail?.created_at ? new Date(bookingDetail.created_at).toLocaleString() : ''}</Text><Text style={styles.note}>Added by: {bookingDetail?.created_by_name || 'Unknown'}</Text>
+      <Text style={styles.label}>Status: {bookingDetail?.status}</Text>
+      {['PENDING','CONFIRMED','COMPLETED','CANCELLED'].map(s=><TouchableOpacity key={s} style={[styles.secondary,{borderColor:bookingDetail?.status===s?'#2457c5':'#cbd2dc'}]} onPress={()=>updateBookingStatus(bookingDetail,s)}><Text>{s===bookingDetail?.status?'✓ ':''}{s}</Text></TouchableOpacity>)}
+      <Text style={styles.label}>Order items · Selling prices</Text>{bookingDetailItems.map(x=><View key={x.id} style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{x.product_name}</Text><Text style={styles.note}>{x.quantity} × {money(x.selling_price)}</Text></View><Text>{money(x.selling_subtotal)}</Text></View>)}
+      <View style={styles.line}><Text style={styles.flex}>Total selling amount</Text><Text style={styles.metric}>{money(bookingDetail?.total_selling)}</Text></View>
+      {tab==='Booking Search'&&<><Text style={styles.label}>Cost breakdown</Text>{bookingDetailItems.map(x=><View key={'cost-'+x.id} style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{x.product_name}</Text><Text style={styles.note}>{x.quantity} × {money(x.cost_price)}</Text></View><Text>{money(x.cost_subtotal)}</Text></View>)}<View style={styles.line}><Text style={styles.flex}>Total cost</Text><Text style={styles.metric}>{money(bookingDetail?.total_cost)}</Text></View></>}
+      <TouchableOpacity style={styles.secondary} onPress={()=>setBookingDetail(null)}><Text>Close</Text></TouchableOpacity>
+    </ScrollView></SafeAreaView></Modal>
   </SafeAreaView>;
 }
 
