@@ -111,6 +111,11 @@ export default function App() {
   const [adminUserModal, setAdminUserModal] = useState(false);
   const [editingAdminUser, setEditingAdminUser] = useState(null);
   const [adminUserForm, setAdminUserForm] = useState({full_name:'', username:'', role:'USER', password:''});
+  const [ownPasswordModal, setOwnPasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newOwnPassword, setNewOwnPassword] = useState('');
+  const [confirmOwnPassword, setConfirmOwnPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
 
 
 
@@ -360,6 +365,28 @@ export default function App() {
     if (sessionError) Alert.alert('Login failed', sessionError.message);
   }
   async function signOut() { await supabase.auth.signOut(); }
+  async function saveOwnPassword() {
+    if (newOwnPassword.length < 8) return Alert.alert('Password too short', 'Use at least 8 characters.');
+    if (newOwnPassword !== confirmOwnPassword) return Alert.alert('Passwords do not match', 'Please enter the same new password twice.');
+    if (!currentPassword) return Alert.alert('Current password required', 'Enter your current password to continue.');
+    if (!session?.user?.email) return Alert.alert('Unable to verify account', 'Please sign out and sign in again while online.');
+    setPasswordSaving(true);
+    try {
+      const { error: verifyError } = await supabase.auth.signInWithPassword({ email: session.user.email, password: currentPassword });
+      if (verifyError) throw new Error('Your current password is incorrect.');
+      const { data, error } = await supabase.functions.invoke('admin-user-management', {
+        body: { action: 'change_own_password', password: newOwnPassword }
+      });
+      if (error) throw new Error(error.message || 'Could not change password.');
+      if (data?.error) throw new Error(data.error);
+      setProfile(old => old ? { ...old, must_change_password: false } : old);
+      setCurrentPassword(''); setNewOwnPassword(''); setConfirmOwnPassword('');
+      setOwnPasswordModal(false);
+      Alert.alert('Password changed', 'Your password has been updated.');
+    } catch (error) {
+      Alert.alert('Could not change password', error.message || 'Please try again.');
+    } finally { setPasswordSaving(false); }
+  }
 
   function newProduct() {
     setSelected(null);
@@ -980,6 +1007,16 @@ export default function App() {
   if (loading) return <View style={styles.center}><ActivityIndicator size="large" /><Text>Loading EAN Marketing…</Text></View>;
   if (!session) return <SafeAreaView style={styles.center}><StatusBar style="dark"/><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>Sales & Inventory</Text><TextInput style={styles.input} placeholder="Username" autoCapitalize="none" value={username} onChangeText={setUsername}/><TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword}/><TouchableOpacity style={styles.primary} onPress={signIn}><Text style={styles.primaryText}>Sign in</Text></TouchableOpacity></SafeAreaView>;
   if (!profile) return <SafeAreaView style={styles.center}><Text>Profile not found. Please contact your administrator.</Text><TouchableOpacity onPress={signOut}><Text style={styles.link}>Sign out</Text></TouchableOpacity></SafeAreaView>;
+  if (profile.must_change_password) return <SafeAreaView style={styles.center}>
+    <StatusBar style="dark"/>
+    <Text style={styles.heading}>Change your temporary password</Text>
+    <Text style={styles.note}>Your administrator assigned a temporary password. Change it before using EAN Marketing.</Text>
+    <TextInput style={styles.input} placeholder="Current temporary password" secureTextEntry value={currentPassword} onChangeText={setCurrentPassword}/>
+    <TextInput style={styles.input} placeholder="New password (at least 8 characters)" secureTextEntry value={newOwnPassword} onChangeText={setNewOwnPassword}/>
+    <TextInput style={styles.input} placeholder="Confirm new password" secureTextEntry value={confirmOwnPassword} onChangeText={setConfirmOwnPassword}/>
+    <TouchableOpacity style={styles.primary} disabled={passwordSaving} onPress={saveOwnPassword}><Text style={styles.primaryText}>{passwordSaving?'Saving…':'Change password'}</Text></TouchableOpacity>
+    <TouchableOpacity onPress={signOut}><Text style={styles.link}>Sign out</Text></TouchableOpacity>
+  </SafeAreaView>;
 
   const filtered = products.filter(p => [p.name,p.sku,p.category].join(' ').toLowerCase().includes(search.toLowerCase()));
   const totalSales = sales.reduce((n,s)=>n+Number(s.total_amount||0),0);
@@ -991,7 +1028,7 @@ export default function App() {
   const invoiceDetailDiscount = Number(invoiceDetail?.discount || 0);
   const invoiceDetailTotal = Math.max(0, invoiceDetailSubtotal - invoiceDetailDiscount);
 
-  return <SafeAreaView style={styles.page}><StatusBar style="dark"/><View style={styles.header}><View><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>{profile.full_name || profile.role}</Text>{!isOnline&&<Text style={styles.note}>Offline · showing saved records</Text>}{pendingSyncCount>0&&<Text style={styles.note}>{pendingSyncCount} change(s) waiting to sync</Text>}</View><TouchableOpacity onPress={signOut}><Text style={styles.link}>Sign out</Text></TouchableOpacity></View>    {tab!=='Home'&&<TouchableOpacity style={styles.homeLink} onPress={()=>setTab('Home')}><Text style={styles.link}>‹ Home</Text></TouchableOpacity>}
+  return <SafeAreaView style={styles.page}><StatusBar style="dark"/><View style={styles.header}><View><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>{profile.full_name || profile.role}</Text>{!isOnline&&<Text style={styles.note}>Offline · showing saved records</Text>}{pendingSyncCount>0&&<Text style={styles.note}>{pendingSyncCount} change(s) waiting to sync</Text>}</View><View><TouchableOpacity onPress={()=>setOwnPasswordModal(true)}><Text style={styles.link}>Change password</Text></TouchableOpacity><TouchableOpacity onPress={signOut}><Text style={styles.link}>Sign out</Text></TouchableOpacity></View></View>    {tab!=='Home'&&<TouchableOpacity style={styles.homeLink} onPress={()=>setTab('Home')}><Text style={styles.link}>‹ Home</Text></TouchableOpacity>}
     {tab==='Home'&&<View style={styles.dashboard}>
       {[
         ['Products','▦'],['Sales','₱'],['Booking / Orders','🛒'],['Booking Search','⌕'],
@@ -1055,6 +1092,14 @@ export default function App() {
     </View>}
     {tab==='Reports' && <View style={styles.report}><Text style={styles.metricLabel}>Recorded sales (latest 100)</Text><Text style={styles.metric}>{money(totalSales)}</Text><Text style={styles.metricLabel}>Gross profit</Text><Text style={styles.metric}>{money(totalProfit)}</Text>{isAdmin&&<><Text style={styles.metricLabel}>Expenses (latest 100)</Text><Text style={styles.metric}>{money(totalExpenses)}</Text><Text style={styles.metricLabel}>Profit after listed expenses</Text><Text style={styles.metric}>{money(totalProfit-totalExpenses)}</Text></>}</View>}
     {tab==='Expenses'&&isAdmin&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Expense description" value={expenseText} onChangeText={setExpenseText}/><TextInput style={styles.input} placeholder="Amount (PHP)" keyboardType="decimal-pad" value={expenseAmount} onChangeText={setExpenseAmount}/><TouchableOpacity style={styles.primary} onPress={addExpense}><Text style={styles.primaryText}>Save expense</Text></TouchableOpacity><FlatList data={expenses} keyExtractor={x=>x.id} renderItem={({item})=><View style={styles.line}><Text style={styles.flex}>{item.description}</Text><Text>{money(item.amount)}</Text></View>}/></View>}
+    <Modal visible={ownPasswordModal} animationType="slide" onRequestClose={()=>setOwnPasswordModal(false)}><SafeAreaView style={styles.modal}><ScrollView>
+      <Text style={styles.heading}>Change password</Text>
+      <Text style={styles.label}>Current password</Text><TextInput style={styles.input} secureTextEntry value={currentPassword} onChangeText={setCurrentPassword} placeholder="Current password"/>
+      <Text style={styles.label}>New password</Text><TextInput style={styles.input} secureTextEntry value={newOwnPassword} onChangeText={setNewOwnPassword} placeholder="At least 8 characters"/>
+      <Text style={styles.label}>Confirm new password</Text><TextInput style={styles.input} secureTextEntry value={confirmOwnPassword} onChangeText={setConfirmOwnPassword} placeholder="Enter new password again"/>
+      <TouchableOpacity style={styles.primary} disabled={passwordSaving} onPress={saveOwnPassword}><Text style={styles.primaryText}>{passwordSaving?'Saving…':'Save new password'}</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.secondary} onPress={()=>setOwnPasswordModal(false)}><Text>Cancel</Text></TouchableOpacity>
+    </ScrollView></SafeAreaView></Modal>
     <Modal visible={adminUserModal} animationType="slide" onRequestClose={()=>setAdminUserModal(false)}><SafeAreaView style={styles.modal}><ScrollView>
       <Text style={styles.heading}>{editingAdminUser?'Edit user':'Add user'}</Text>
       <Text style={styles.label}>Full name</Text><TextInput style={styles.input} value={adminUserForm.full_name} onChangeText={v=>setAdminUserForm(old=>({...old,full_name:v}))} placeholder="Full name"/>
