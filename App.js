@@ -340,7 +340,7 @@ export default function App() {
       loadList(supabase.from('sales').select('*, products(name)').order('created_at', {ascending:false}).limit(100), 'sales', setSales),
       loadList(supabase.from('customers').select('*').order('name'), 'customers', setCustomers),
       loadList(supabase.from('invoices').select('*, customers(name,address)').order('created_at', {ascending:false}).limit(100), 'invoices', setInvoices),
-      loadList(supabase.from('bookings').select('*, customers(name)').order('created_at', {ascending:false}).limit(200), 'bookings', setBookings)
+      loadList(supabase.from('bookings').select('*, customers(name), booking_items(count)').order('created_at', {ascending:false}).limit(200), 'bookings', setBookings)
     ]);
     if (isAdmin) {
       await Promise.all([
@@ -608,6 +608,31 @@ export default function App() {
     if (loadError || !saved) return Alert.alert('Order saved', 'Your order was saved, but its details could not be opened.');
     await openBooking(saved);
   }
+  function bookingItemCount(item) {
+    if (item.is_offline_pending && Array.isArray(item.local_items)) return item.local_items.length;
+    const relation = item.booking_items;
+    if (Array.isArray(relation)) return Number(relation[0]?.count || 0);
+    return Number(relation?.count || 0);
+  }
+
+  async function searchBookingByReference() {
+    const reference = bookingSearch.trim().toUpperCase();
+    if (!reference) return;
+    if (await getNetworkStatus()) {
+      const {data, error} = await supabase.from('bookings')
+        .select('*, customers(name), booking_items(count)')
+        .eq('reference_number', reference)
+        .maybeSingle();
+      if (error) return Alert.alert('Search failed', error.message);
+      if (data) {
+        setBookings(old => [data, ...old.filter(item => item.id !== data.id)]);
+        return;
+      }
+    }
+    const cached = bookings.find(item => (item.reference_number || '').toUpperCase() === reference);
+    if (!cached) Alert.alert('No matching order', 'No saved order was found for that reference on this device.');
+  }
+
   async function openBooking(item) {
     setBookingDetail(item);
     if (item.is_offline_pending && Array.isArray(item.local_items)) {
@@ -1041,11 +1066,11 @@ export default function App() {
     {tab==='Orders'&&<View style={styles.flex}>
       <TouchableOpacity style={styles.primary} onPress={newBooking}><Text style={styles.primaryText}>+ Create booking / order</Text></TouchableOpacity>
       <FlatList data={bookings} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No bookings yet.</Text>} renderItem={({item})=><TouchableOpacity style={styles.line} onPress={()=>openBooking(item)}>
-        <View style={styles.flex}><Text style={styles.productName}>{item.reference_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{item.status} · {money(item.total_selling)}</Text></View>
+        <View style={styles.flex}><Text style={styles.productName}>{item.reference_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{item.status} · {bookingItemCount(item)} item(s) · {money(item.total_selling)}</Text></View>
       </TouchableOpacity>}/>
     </View>}
     {tab==='Booking Search'&&<View style={styles.flex}>
-      <TextInput style={styles.compactSearchInput} placeholder="Enter booking reference (e.g. ORD-000001)" autoCapitalize="characters" value={bookingSearch} onChangeText={setBookingSearch}/>
+      <TextInput style={styles.compactSearchInput} placeholder="Enter booking reference (e.g. ORD-000001)" autoCapitalize="characters" value={bookingSearch} onChangeText={setBookingSearch} onSubmitEditing={searchBookingByReference} returnKeyType="search"/><TouchableOpacity style={styles.compactAddButton} onPress={searchBookingByReference}><Text style={styles.primaryText}>Search saved orders</Text></TouchableOpacity>
       <FlatList contentContainerStyle={styles.compactList} data={bookings.filter(x=>(x.reference_number || '').toLowerCase().includes(bookingSearch.trim().toLowerCase()))} keyExtractor={x=>x.id} ListEmptyComponent={<Text style={styles.note}>{bookingSearch.trim()?'No matching booking reference.':'Enter a reference number to search.'}</Text>} renderItem={({item})=><TouchableOpacity style={styles.compactResult} onPress={()=>openBooking(item)}>
         <View style={styles.flex}><Text style={styles.productName}>{item.reference_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text></View><Text style={styles.link}>View</Text>
       </TouchableOpacity>}/>
