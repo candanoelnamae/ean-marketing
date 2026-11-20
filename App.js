@@ -568,6 +568,7 @@ export default function App() {
     setBookingProduct(null); setBookingQty('1');
   }
   async function saveBooking() {
+    if (!requirePermission('bookings','add','bookings')) return;
     if (!bookingCustomer) return Alert.alert('Choose a customer', 'Select a customer for this order.');
     if (!bookingItems.length) return Alert.alert('Add products', 'Add at least one product to the order.');
     const clientRequestId = makeLocalId();
@@ -696,6 +697,7 @@ export default function App() {
     setInvoiceProduct(null); setInvoiceQty('1');
   }
   async function saveInvoice() {
+    if (!requirePermission('billing','add','invoices')) return;
     if (!invoiceCustomer) return Alert.alert('Choose a customer', 'Select a customer for this invoice.');
     if (!invoiceItems.length) return Alert.alert('Add products', 'Add at least one product to the invoice.');
     const discount = Number(invoiceDiscount || 0);
@@ -1018,9 +1020,9 @@ export default function App() {
     const previous = rolePermissions;
     const updated = previous.map(row => row.role === role && row.module === module ? {...row, [field]:value} : row);
     setRolePermissions(updated);
-    const {error} = await supabase.from('role_permissions').upsert({
-      role, module, [field]:value, updated_by:session?.user?.id
-    }, {onConflict:'role,module'});
+    const {error} = await supabase.from('role_permissions')
+      .update({[field]:value, updated_by:session?.user?.id})
+      .eq('role', role).eq('module', module);
     if (error) {
       setRolePermissions(previous);
       Alert.alert('Could not save permission', error.message);
