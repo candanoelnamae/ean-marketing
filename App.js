@@ -38,6 +38,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [startupError, setStartupError] = useState('');
   const [isOnline, setIsOnline] = useState(true);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -137,10 +138,14 @@ export default function App() {
 
   useEffect(() => {
     if (!supabaseConfigured) { setLoading(false); return; }
-    supabase.auth.getSession().then(({data}) => {
+    supabase.auth.getSession().then(({data, error}) => {
+      if (error) throw error;
       setSession(data.session);
       if (data.session) loadProfile(data.session.user.id);
       else setLoading(false);
+    }).catch(error => {
+      setStartupError(String(error?.message || error));
+      setLoading(false);
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
@@ -272,16 +277,21 @@ export default function App() {
   }
 
   async function loadProfile(id) {
-    const {data, error} = await supabase.from('profiles').select('*').eq('id', id).single();
-    if (!error && data) {
-      setProfile(data);
-      await saveCachedRecords(id, 'profile', data);
-    } else {
-      const cached = await readCachedRecords(id, 'profile');
-      if (cached) setProfile(cached);
-      else Alert.alert('Profile issue', 'Your profile is not available on this device. Connect to the internet and sign in again.');
+    try {
+      const {data, error} = await supabase.from('profiles').select('*').eq('id', id).single();
+      if (!error && data) {
+        setProfile(data);
+        await saveCachedRecords(id, 'profile', data);
+      } else {
+        const cached = await readCachedRecords(id, 'profile');
+        if (cached) setProfile(cached);
+        else Alert.alert('Profile issue', 'Your profile is not available on this device. Connect to the internet and sign in again.');
+      }
+      setLoading(false);
+    } catch (error) {
+      setStartupError(String(error?.message || error));
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function refresh() {
@@ -1086,6 +1096,7 @@ export default function App() {
   }
 
   if (!supabaseConfigured) return <SafeAreaView style={styles.center}><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.note}>Setup is not complete yet. Add your Supabase URL and publishable key to the app environment before running it.</Text></SafeAreaView>;
+  if (startupError) return <SafeAreaView style={styles.center}><StatusBar style="dark"/><Text style={styles.heading}>EAN Marketing could not start</Text><Text style={styles.note}>Please send this message to support:</Text><Text selectable style={styles.note}>{startupError}</Text></SafeAreaView>;
   if (loading) return <View style={styles.center}><ActivityIndicator size="large" /><Text>Loading EAN Marketing…</Text></View>;
   if (!session) return <SafeAreaView style={styles.center}><StatusBar style="dark"/><Text style={styles.heading}>EAN Marketing</Text><Text style={styles.sub}>Sales & Inventory</Text><TextInput style={styles.input} placeholder="Username" autoCapitalize="none" value={username} onChangeText={setUsername}/><TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword}/><TouchableOpacity style={styles.primary} onPress={signIn}><Text style={styles.primaryText}>Sign in</Text></TouchableOpacity></SafeAreaView>;
   if (!profile) return <SafeAreaView style={styles.center}><Text>Profile not found. Please contact your administrator.</Text><TouchableOpacity onPress={signOut}><Text style={styles.link}>Sign out</Text></TouchableOpacity></SafeAreaView>;
