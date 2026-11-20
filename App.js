@@ -194,6 +194,8 @@ export default function App() {
       .on('postgres_changes', {event:'*', schema:'public', table:'expenses'}, refresh)
       .on('postgres_changes', {event:'*', schema:'public', table:'bookings'}, refresh)
       .on('postgres_changes', {event:'*', schema:'public', table:'booking_items'}, refresh)
+      .on('postgres_changes', {event:'*', schema:'public', table:'profiles'}, async () => { await loadProfile(session.user.id); await loadRolePermissions(); })
+      .on('postgres_changes', {event:'*', schema:'public', table:'role_permissions'}, loadRolePermissions)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [session, profile, isAdmin]);
