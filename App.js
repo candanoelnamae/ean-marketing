@@ -495,6 +495,7 @@ export default function App() {
     }
   }
   async function recordSale() {
+    if (!requirePermission('sales','add','sales')) return;
     const qty = parseInt(quantity,10);
     if (!Number.isInteger(qty) || qty < 1) return Alert.alert('Invalid quantity', 'Enter a quantity of at least 1.');
     if (!selected) return Alert.alert('Choose a product', 'Select a product before recording a sale.');
@@ -532,6 +533,7 @@ export default function App() {
     Alert.alert('Sale recorded', 'Stock has been updated.');
   }
   async function addExpense() {
+    if (!requirePermission('expenses','add','expenses')) return;
     const amount = Number(expenseAmount);
     if (!expenseText.trim() || !Number.isFinite(amount) || amount <= 0) return Alert.alert('Check details', 'Enter an expense description and a valid amount.');
     const online = await getNetworkStatus();
@@ -809,6 +811,7 @@ export default function App() {
     setPaymentScreen(true);
   }
   async function submitInvoicePayment(receivedOverride) {
+    if (!requirePermission('billing','edit','invoice payments')) return;
     if (paymentBusy) return;
     setPaymentError('');
     const balance = Number(invoiceDetail?.balance || 0);
@@ -1106,8 +1109,8 @@ export default function App() {
     {tab==='Home'&&<View style={styles.dashboard}>
       {[
         ['Products','▦'],['Sales','₱'],['Booking / Orders','🛒'],['Booking Search','⌕'],
-        ['Customers','♙'],['Billing','▤'],['Reports','▥'],
-        ...(isAdmin?[['Vendors','♧'],['Expenses','−'],['Settings','⚙']]:[])
+        ['Customers','♙'],['Billing','▤'],['Reports','▥'],['Vendors','♧'],['Expenses','−'],
+        ...(isAdmin?[['Settings','⚙']]:[])
       ].filter(([name])=>hasPermission(({ 'Booking / Orders':'bookings','Booking Search':'booking_search','Settings':'settings' }[name] || name.toLowerCase()),'view')).map(([name,symbol])=><TouchableOpacity key={name} style={styles.featureTile} onPress={()=>setTab(name==='Booking / Orders'?'Orders':name==='Booking Search'?'Booking Search':name==='Settings'?'Settings':name)}>
         <Text style={styles.featureIcon}>{symbol}</Text><Text style={styles.featureName}>{name}</Text>
       </TouchableOpacity>)}
