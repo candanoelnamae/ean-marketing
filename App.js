@@ -1233,7 +1233,7 @@ function AppContent() {
       <View style={styles.invoiceTotals}><View style={styles.invoiceTotalRow}><Text>Subtotal</Text><Text>{money(invoiceDetailSubtotal)}</Text></View><View style={styles.invoiceTotalRow}><Text>Discount</Text><Text>- {money(invoiceDetailDiscount)}</Text></View><View style={styles.invoiceTotalRow}><Text style={styles.invoiceGrandLabel}>TOTAL AMOUNT</Text><Text style={styles.invoiceGrandLabel}>{money(invoiceDetailTotal)}</Text></View></View>
       <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'flex-start',gap:16,marginTop:12}}>
         <View style={{flex:1}}>
-          <Text style={styles.label}>Prepared by: {invoiceDetail.created_by_name || "Unknown"}</Text>
+          <Text style={styles.label}>Prepared by: {invoiceDetail?.created_by_name || "Unknown"}</Text>
           <Text style={styles.note}>Invoice date: {invoiceDetail?.created_at ? new Date(invoiceDetail.created_at).toLocaleDateString() : ''}</Text>
           {invoiceDetail?.confirmed_at ? <><Text style={{color:'#16723a',fontWeight:'700',marginTop:8}}>CONFIRMED</Text><Text style={styles.note}>Confirmed by: {invoiceDetail.confirmed_by_name || 'Unknown'}</Text></> : null}
         </View>
