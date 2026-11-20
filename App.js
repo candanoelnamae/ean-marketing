@@ -996,12 +996,12 @@ export default function App() {
     const full_name = adminUserForm.full_name.trim();
     const username = adminUserForm.username.trim();
     if (!full_name || !username) return Alert.alert('Missing information','Enter the full name and username.');
-    if (!editingAdminUser && adminUserForm.password.length < 6) return Alert.alert('Password required','Enter a default password with at least 6 characters.');
+    if (!editingAdminUser && adminUserForm.password.length < 8) return Alert.alert('Password required','Enter a default password with at least 8 characters.');
     try {
       if (editingAdminUser) {
-        await adminUserAction({action:'update', id:editingAdminUser.id, full_name, username, role:adminUserForm.role});
+        await adminUserAction({action:'update', user_id:editingAdminUser.id, full_name, username, role:adminUserForm.role});
         if (adminUserForm.password) {
-          await adminUserAction({action:'reset_password', id:editingAdminUser.id, password:adminUserForm.password});
+          await adminUserAction({action:'reset_password', user_id:editingAdminUser.id, password:adminUserForm.password});
         }
       } else {
         await adminUserAction({action:'create', full_name, username, role:adminUserForm.role, password:adminUserForm.password});
@@ -1018,7 +1018,7 @@ export default function App() {
       {text:'Cancel', style:'cancel'},
       {text:'Delete', style:'destructive', onPress:async () => {
         try {
-          await adminUserAction({action:'delete', id:item.id});
+          await adminUserAction({action:'delete', user_id:item.id});
           await loadAdminUsers();
           Alert.alert('User deleted','The account has been deleted.');
         } catch (error) {
