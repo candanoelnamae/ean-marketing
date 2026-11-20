@@ -1123,7 +1123,7 @@ export default function App() {
     {tab==='Orders'&&hasPermission('bookings','view')&&<View style={styles.flex}>
       <TouchableOpacity style={styles.primary} onPress={newBooking}><Text style={styles.primaryText}>+ Create booking / order</Text></TouchableOpacity>
       <FlatList data={bookings} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No bookings yet.</Text>} renderItem={({item})=><TouchableOpacity style={styles.line} onPress={()=>openBooking(item)}>
-        <View style={styles.flex}><Text style={styles.productName}>{item.reference_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{item.status} · {bookingItemCount(item)} item(s) · {money(item.total_selling)}</Text></View>
+        <View style={styles.flex}><Text style={styles.productName}>{item.reference_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{(item.status || 'PENDING').charAt(0) + (item.status || 'PENDING').slice(1).toLowerCase()} · {bookingItemCount(item)} item(s) · {money(item.total_selling)}</Text></View>
       </TouchableOpacity>}/>
     </View>}
     {tab==='Booking Search'&&hasPermission('booking_search','view')&&<View style={styles.flex}>
@@ -1276,8 +1276,8 @@ export default function App() {
     </ScrollView></SafeAreaView></Modal>
     <Modal visible={!!bookingDetail} animationType="slide" onRequestClose={()=>setBookingDetail(null)}><SafeAreaView style={styles.modal}><ScrollView>
       <Text style={styles.heading}>{bookingDetail?.reference_number}</Text><Text style={styles.note}>Customer: {bookingDetail?.customers?.name || 'Customer'}</Text><Text style={styles.note}>Order date: {bookingDetail?.created_at ? new Date(bookingDetail.created_at).toLocaleString() : ''}</Text><Text style={styles.note}>Added by: {bookingDetail?.created_by_name || 'Unknown'}</Text>
-      <Text style={styles.label}>Status: {bookingDetail?.status}</Text>
-      {['PENDING','CONFIRMED','COMPLETED','CANCELLED'].map(s=><TouchableOpacity key={s} style={[styles.secondary,{borderColor:bookingDetail?.status===s?'#2457c5':'#cbd2dc'}]} onPress={()=>updateBookingStatus(bookingDetail,s)}><Text>{s===bookingDetail?.status?'✓ ':''}{s}</Text></TouchableOpacity>)}
+      <Text style={styles.label}>Status: {(bookingDetail?.status || 'PENDING').charAt(0) + (bookingDetail?.status || 'PENDING').slice(1).toLowerCase()}</Text>
+      {hasPermission('bookings','edit')&&['PENDING','CONFIRMED','COMPLETED','CANCELLED'].map(s=><TouchableOpacity key={s} style={[styles.secondary,{borderColor:bookingDetail?.status===s?'#2457c5':'#cbd2dc'}]} onPress={()=>updateBookingStatus(bookingDetail,s)}><Text>{s===bookingDetail?.status?'✓ ':''}{s.charAt(0)+s.slice(1).toLowerCase()}</Text></TouchableOpacity>)}
       <Text style={styles.label}>Order items · Selling prices</Text>{bookingDetailItems.map(x=><View key={x.id} style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{x.product_name}</Text><Text style={styles.note}>{x.quantity} × {money(x.selling_price)}</Text></View><Text>{money(x.selling_subtotal)}</Text></View>)}
       <View style={styles.line}><Text style={styles.flex}>Total selling amount</Text><Text style={styles.metric}>{money(bookingDetail?.total_selling)}</Text></View>
       {tab==='Booking Search'&&<><Text style={styles.label}>Cost breakdown</Text>{bookingDetailItems.map(x=><View key={'cost-'+x.id} style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{x.product_name}</Text><Text style={styles.note}>{x.quantity} × {money(x.cost_price)}</Text></View><Text>{money(x.cost_subtotal)}</Text></View>)}<View style={styles.line}><Text style={styles.flex}>Total cost</Text><Text style={styles.metric}>{money(bookingDetail?.total_cost)}</Text></View></>}
