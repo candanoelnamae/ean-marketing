@@ -122,7 +122,18 @@ export default function App() {
 
 
   const isAdmin = profile?.role === 'ADMIN';
-  const canAddProducts = Boolean(profile);
+  function hasPermission(module, action='view') {
+    if (!profile) return false;
+    if (profile.role === 'ADMIN') return true;
+    const row = rolePermissions.find(item => item.role === profile.role && item.module === module);
+    return Boolean(row?.['can_' + action]);
+  }
+  function requirePermission(module, action, label) {
+    if (hasPermission(module, action)) return true;
+    Alert.alert('Permission denied', 'Your account does not have permission to ' + action + ' ' + (label || module) + '. Ask an administrator to update your access.');
+    return false;
+  }
+  const canAddProducts = hasPermission('products','add');
 
   useEffect(() => {
     if (!supabaseConfigured) { setLoading(false); return; }
@@ -139,7 +150,7 @@ export default function App() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  useEffect(() => { if (session && profile) refresh(); }, [session, profile, tab]);
+  useEffect(() => { if (session && profile) { loadRolePermissions(); refresh(); } }, [session, profile, tab]);
   useEffect(() => {
     if (!session || !profile) return;
     updatePendingCount();
@@ -391,18 +402,19 @@ export default function App() {
   }
 
   function newProduct() {
+    if (!requirePermission('products','add','products')) return;
     setSelected(null);
     setForm({name:'', sku:'', category:'', description:'', price:'', cost:'', stock:'0'});
     setEdit(true);
   }
   function editProduct(item) {
+    if (!requirePermission('products','edit','products')) return;
     setSelected(item);
     setForm({name:item.name || '', sku:item.sku || '', category:item.category || '', description:item.description || '', price:String(item.price ?? ''), cost:String(item.cost ?? ''), stock:String(item.stock ?? '0')});
     setEdit(true);
   }
   async function saveProduct() {
-    if (selected && !isAdmin) return Alert.alert('Not allowed', 'You can add new products, but only an administrator can edit existing products.');
-    if (!canAddProducts) return Alert.alert('Not allowed', 'You must be signed in to add products.');
+    if (!requirePermission('products', selected ? 'edit' : 'add', 'products')) return;
     if (!form.name.trim() || !form.price || !form.cost || form.stock === '') return Alert.alert('Missing information', 'Enter product name, price, cost, and stock.');
     const payload = {...form, name:form.name.trim(), price:Number(form.price), cost:Number(form.cost), stock:parseInt(form.stock,10)};
     const online = await getNetworkStatus();
@@ -427,7 +439,7 @@ export default function App() {
     setEdit(false); refresh();
   }
   function deleteProduct(item) {
-    if (!isAdmin) return Alert.alert('Not allowed', 'Only an administrator can delete products.');
+    if (!requirePermission('products','delete','products')) return;
     Alert.alert('Delete product?', 'Delete "' + item.name + '"? If it is already used in a sale or invoice, the database may prevent deletion to protect transaction history.', [
       {text:'Cancel', style:'cancel'},
       {text:'Delete', style:'destructive', onPress:async () => {
@@ -538,6 +550,7 @@ export default function App() {
   }
 
   function newBooking() {
+    if (!requirePermission('bookings','add','bookings')) return;
     setBookingCustomer(null); setBookingCustomerSearch(''); setBookingProductSearch('');
     setBookingProduct(null); setBookingQty('1'); setBookingItems([]); setBookingNotes('');
     setBookingModal(true);
@@ -656,6 +669,7 @@ export default function App() {
     if (cachedItems === null) Alert.alert('Order items unavailable offline', 'Open this order once while online to save its details on this device.');
   }
   async function updateBookingStatus(item, status) {
+    if (!requirePermission('bookings','edit','orders')) return;
     const {error} = await supabase.from('bookings').update({status}).eq('id', item.id);
     if (error) return Alert.alert('Could not update order', error.message);
     const {data} = await supabase.from('bookings').select('*, customers(name)').eq('id', item.id).single();
@@ -663,6 +677,7 @@ export default function App() {
   }
 
   function newInvoice() {
+    if (!requirePermission('billing','add','invoices')) return;
     setInvoiceCustomer(null); setInvoiceProduct(null); setInvoiceQty('1');
     setInvoiceCustomerSearch(''); setInvoiceProductSearch('');
     setInvoiceItems([]); setInvoiceDiscount('0'); setInvoicePaid('0');
@@ -866,16 +881,19 @@ export default function App() {
     Alert.alert('Payment recorded', 'The invoice balance has been updated.');
   }
   function newVendor() {
+    if (!requirePermission('vendors','add','vendors')) return;
     setEditingVendor(null);
     setVendorForm({name:'', contact_person:'', phone:'', email:'', address:'', notes:''});
     setVendorModal(true);
   }
   function editVendor(item) {
+    if (!requirePermission('vendors','edit','vendors')) return;
     setEditingVendor(item);
     setVendorForm({name:item.name || '', contact_person:item.contact_person || '', phone:item.phone || '', email:item.email || '', address:item.address || '', notes:item.notes || ''});
     setVendorModal(true);
   }
   async function saveVendor() {
+    if (!requirePermission('vendors', editingVendor ? 'edit' : 'add', 'vendors')) return;
     if (!vendorForm.name.trim()) return Alert.alert('Missing information', 'Enter the vendor or company name.');
     const payload = {...vendorForm, name:vendorForm.name.trim()};
     const online = await getNetworkStatus();
@@ -896,6 +914,7 @@ export default function App() {
     refresh();
   }
   function deleteVendor(item) {
+    if (!requirePermission('vendors','delete','vendors')) return;
     Alert.alert('Delete vendor?', `Delete ${item.name}?`, [
       {text:'Cancel', style:'cancel'},
       {text:'Delete', style:'destructive', onPress:async () => {
@@ -915,16 +934,19 @@ export default function App() {
   }
 
   function newCustomer() {
+    if (!requirePermission('customers','add','customers')) return;
     setEditingCustomer(null);
     setCustomerForm({name:'', phone:'', email:'', address:'', notes:''});
     setCustomerModal(true);
   }
   function editCustomer(item) {
+    if (!requirePermission('customers','edit','customers')) return;
     setEditingCustomer(item);
     setCustomerForm({name:item.name || '', phone:item.phone || '', email:item.email || '', address:item.address || '', notes:item.notes || ''});
     setCustomerModal(true);
   }
   async function saveCustomer() {
+    if (!requirePermission('customers', editingCustomer ? 'edit' : 'add', 'customers')) return;
     if (!customerForm.name.trim()) return Alert.alert('Missing information', 'Enter the customer name.');
     const payload = {...customerForm, name:customerForm.name.trim()};
     const online = await getNetworkStatus();
@@ -950,6 +972,7 @@ export default function App() {
     refresh();
   }
   function deleteCustomer(item) {
+    if (!requirePermission('customers','delete','customers')) return;
     Alert.alert('Delete customer?', `Delete ${item.name}?`, [
       {text:'Cancel', style:'cancel'},
       {text:'Delete', style:'destructive', onPress:async () => {
@@ -1085,17 +1108,17 @@ export default function App() {
         ['Products','▦'],['Sales','₱'],['Booking / Orders','🛒'],['Booking Search','⌕'],
         ['Customers','♙'],['Billing','▤'],['Reports','▥'],
         ...(isAdmin?[['Vendors','♧'],['Expenses','−'],['Settings','⚙']]:[])
-      ].map(([name,symbol])=><TouchableOpacity key={name} style={styles.featureTile} onPress={()=>setTab(name==='Booking / Orders'?'Orders':name==='Booking Search'?'Booking Search':name==='Settings'?'Settings':name)}>
+      ].filter(([name])=>hasPermission(({ 'Booking / Orders':'bookings','Booking Search':'booking_search','Settings':'settings' }[name] || name.toLowerCase()),'view')).map(([name,symbol])=><TouchableOpacity key={name} style={styles.featureTile} onPress={()=>setTab(name==='Booking / Orders'?'Orders':name==='Booking Search'?'Booking Search':name==='Settings'?'Settings':name)}>
         <Text style={styles.featureIcon}>{symbol}</Text><Text style={styles.featureName}>{name}</Text>
       </TouchableOpacity>)}
     </View>}
-    {tab==='Orders'&&<View style={styles.flex}>
+    {tab==='Orders'&&hasPermission('bookings','view')&&<View style={styles.flex}>
       <TouchableOpacity style={styles.primary} onPress={newBooking}><Text style={styles.primaryText}>+ Create booking / order</Text></TouchableOpacity>
       <FlatList data={bookings} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No bookings yet.</Text>} renderItem={({item})=><TouchableOpacity style={styles.line} onPress={()=>openBooking(item)}>
         <View style={styles.flex}><Text style={styles.productName}>{item.reference_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{item.status} · {bookingItemCount(item)} item(s) · {money(item.total_selling)}</Text></View>
       </TouchableOpacity>}/>
     </View>}
-    {tab==='Booking Search'&&<View style={styles.flex}>
+    {tab==='Booking Search'&&hasPermission('booking_search','view')&&<View style={styles.flex}>
       <TextInput style={styles.compactSearchInput} placeholder="Enter booking reference (e.g. ORD-000001)" autoCapitalize="characters" value={bookingSearch} onChangeText={setBookingSearch} onSubmitEditing={searchBookingByReference} returnKeyType="search"/><TouchableOpacity style={styles.compactAddButton} onPress={searchBookingByReference}><Text style={styles.primaryText}>Search saved orders</Text></TouchableOpacity>
       <FlatList contentContainerStyle={styles.compactList} data={bookings.filter(x=>(x.reference_number || '').toLowerCase().includes(bookingSearch.trim().toLowerCase()))} keyExtractor={x=>x.id} ListEmptyComponent={<Text style={styles.note}>{bookingSearch.trim()?'No matching booking reference.':'Enter a reference number to search.'}</Text>} renderItem={({item})=><TouchableOpacity style={styles.compactResult} onPress={()=>openBooking(item)}>
         <View style={styles.flex}><Text style={styles.productName}>{item.reference_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text></View><Text style={styles.link}>View</Text>
@@ -1130,11 +1153,11 @@ export default function App() {
         <View><TouchableOpacity onPress={()=>openAdminUser(item)}><Text style={styles.link}>Edit / Reset</Text></TouchableOpacity><TouchableOpacity onPress={()=>deleteAdminUser(item)}><Text style={{color:'#c62828',padding:8}}>Delete</Text></TouchableOpacity></View>
       </View>}/>
     </View>}
-    {tab==='Products' && <View style={styles.flex}><TextInput style={styles.compactSearchInput} placeholder="Search name, SKU, category…" value={search} onChangeText={setSearch}/>{canAddProducts&&<TouchableOpacity style={styles.compactAddButton} onPress={newProduct}><Text style={styles.primaryText}>+ Add product</Text></TouchableOpacity>}<FlatList contentContainerStyle={styles.compactList} data={filtered} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No products yet.</Text>} renderItem={({item})=><TouchableOpacity style={styles.compactProduct} onPress={()=>{setSelected(item);setQuantity('1')}}>{item.image_url?<Image source={{uri:item.image_url}} style={styles.compactThumb}/>:<View style={styles.compactThumbPlaceholder}><Text>Photo</Text></View>}<View style={styles.flex}><Text style={styles.compactProductName}>{item.name}</Text><Text style={styles.compactNote}>{item.sku || item.category || 'No SKU'} · Stock: {item.stock}</Text><Text style={styles.compactPrice}>{money(item.price)}</Text></View></TouchableOpacity>}/></View>}
-    {tab==='Sales' && <FlatList data={sales} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No sales recorded yet.</Text>} renderItem={({item})=><View style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{item.products?.name || 'Product'}</Text><Text style={styles.note}>Qty: {item.quantity} · {new Date(item.created_at).toLocaleString()}{item.pending_sync ? ' · Waiting to sync' : ''}</Text></View><Text style={styles.price}>{money(item.total_amount)}</Text></View>}/>}
-    {tab==='Billing'&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Search invoice number or customer…" value={billingSearch} onChangeText={setBillingSearch}/><TouchableOpacity style={styles.primary} onPress={newInvoice}><Text style={styles.primaryText}>+ Create invoice</Text></TouchableOpacity><FlatList data={invoices.filter(x=>[x.invoice_number,x.customers?.name,x.payment_status].join(' ').toLowerCase().includes(billingSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No matching invoices.</Text>} renderItem={({item})=><TouchableOpacity style={styles.line} onPress={()=>openInvoice(item)}><View style={styles.flex}><Text style={styles.productName}>{item.invoice_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{item.payment_status} · Balance: {money(item.balance)}</Text></View><Text style={styles.price}>{money(item.total)}</Text></TouchableOpacity>}/></View>}
-    {tab==='Vendors'&&isAdmin&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Search vendor or contact…" value={vendorSearch} onChangeText={setVendorSearch}/><TouchableOpacity style={styles.primary} onPress={newVendor}><Text style={styles.primaryText}>+ Add vendor</Text></TouchableOpacity><FlatList data={vendors.filter(x=>[x.name,x.contact_person,x.phone,x.email].join(' ').toLowerCase().includes(vendorSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No vendors yet.</Text>} renderItem={({item})=><View style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{item.name}</Text><Text style={styles.note}>{item.contact_person || 'No contact person'} {item.phone ? '· '+item.phone : ''}</Text>{item.email ? <Text style={styles.note}>{item.email}</Text> : null}{item.address ? <Text style={styles.note}>{item.address}</Text> : null}</View><View><TouchableOpacity onPress={()=>editVendor(item)}><Text style={styles.link}>Edit</Text></TouchableOpacity><TouchableOpacity onPress={()=>deleteVendor(item)}><Text style={{color:'#c62828',padding:8}}>Delete</Text></TouchableOpacity></View></View>}/></View>}
-    {tab==='Customers' && <View style={styles.flex}>
+    {tab==='Products' && hasPermission('products','view') && <View style={styles.flex}><TextInput style={styles.compactSearchInput} placeholder="Search name, SKU, category…" value={search} onChangeText={setSearch}/>{canAddProducts&&<TouchableOpacity style={styles.compactAddButton} onPress={newProduct}><Text style={styles.primaryText}>+ Add product</Text></TouchableOpacity>}<FlatList contentContainerStyle={styles.compactList} data={filtered} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No products yet.</Text>} renderItem={({item})=><TouchableOpacity style={styles.compactProduct} onPress={()=>{setSelected(item);setQuantity('1')}}>{item.image_url?<Image source={{uri:item.image_url}} style={styles.compactThumb}/>:<View style={styles.compactThumbPlaceholder}><Text>Photo</Text></View>}<View style={styles.flex}><Text style={styles.compactProductName}>{item.name}</Text><Text style={styles.compactNote}>{item.sku || item.category || 'No SKU'} · Stock: {item.stock}</Text><Text style={styles.compactPrice}>{money(item.price)}</Text></View></TouchableOpacity>}/></View>}
+    {tab==='Sales' && hasPermission('sales','view') && <FlatList data={sales} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No sales recorded yet.</Text>} renderItem={({item})=><View style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{item.products?.name || 'Product'}</Text><Text style={styles.note}>Qty: {item.quantity} · {new Date(item.created_at).toLocaleString()}{item.pending_sync ? ' · Waiting to sync' : ''}</Text></View><Text style={styles.price}>{money(item.total_amount)}</Text></View>}/>}
+    {tab==='Billing'&&hasPermission('billing','view')&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Search invoice number or customer…" value={billingSearch} onChangeText={setBillingSearch}/><TouchableOpacity style={styles.primary} onPress={newInvoice}><Text style={styles.primaryText}>+ Create invoice</Text></TouchableOpacity><FlatList data={invoices.filter(x=>[x.invoice_number,x.customers?.name,x.payment_status].join(' ').toLowerCase().includes(billingSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No matching invoices.</Text>} renderItem={({item})=><TouchableOpacity style={styles.line} onPress={()=>openInvoice(item)}><View style={styles.flex}><Text style={styles.productName}>{item.invoice_number}</Text><Text style={styles.note}>{item.customers?.name || 'Customer'} · {new Date(item.created_at).toLocaleDateString()}</Text><Text style={styles.note}>{item.payment_status} · Balance: {money(item.balance)}</Text></View><Text style={styles.price}>{money(item.total)}</Text></TouchableOpacity>}/></View>}
+    {tab==='Vendors'&&hasPermission('vendors','view')&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Search vendor or contact…" value={vendorSearch} onChangeText={setVendorSearch}/><TouchableOpacity style={styles.primary} onPress={newVendor}><Text style={styles.primaryText}>+ Add vendor</Text></TouchableOpacity><FlatList data={vendors.filter(x=>[x.name,x.contact_person,x.phone,x.email].join(' ').toLowerCase().includes(vendorSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No vendors yet.</Text>} renderItem={({item})=><View style={styles.line}><View style={styles.flex}><Text style={styles.productName}>{item.name}</Text><Text style={styles.note}>{item.contact_person || 'No contact person'} {item.phone ? '· '+item.phone : ''}</Text>{item.email ? <Text style={styles.note}>{item.email}</Text> : null}{item.address ? <Text style={styles.note}>{item.address}</Text> : null}</View><View><TouchableOpacity onPress={()=>editVendor(item)}><Text style={styles.link}>Edit</Text></TouchableOpacity><TouchableOpacity onPress={()=>deleteVendor(item)}><Text style={{color:'#c62828',padding:8}}>Delete</Text></TouchableOpacity></View></View>}/></View>}
+    {tab==='Customers' && hasPermission('customers','view') && <View style={styles.flex}>
       {selectedCustomerHistory ? <>        <TouchableOpacity style={styles.secondary} onPress={()=>setSelectedCustomerHistory(null)}><Text>← Back to customers</Text></TouchableOpacity>
         <Text style={styles.heading}>{selectedCustomerHistory.name}</Text>
         <Text style={styles.note}>{selectedCustomerHistory.phone || ''} {selectedCustomerHistory.address || ''}</Text>
@@ -1160,8 +1183,8 @@ export default function App() {
         <FlatList data={customers.filter(x=>[x.name,x.phone,x.email].join(' ').toLowerCase().includes(customerSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No customers yet.</Text>} renderItem={({item})=><View style={styles.line}><TouchableOpacity style={styles.flex} onPress={()=>setSelectedCustomerHistory(item)}><Text style={styles.productName}>{item.name}</Text><Text style={styles.note}>{item.phone || 'No phone'} {item.email ? '· '+item.email : ''}</Text>{item.address ? <Text style={styles.note}>{item.address}</Text> : null}<Text style={styles.link}>View transaction history</Text></TouchableOpacity>{isAdmin&&<View><TouchableOpacity onPress={()=>editCustomer(item)}><Text style={styles.link}>Edit</Text></TouchableOpacity><TouchableOpacity onPress={()=>deleteCustomer(item)}><Text style={{color:'#c62828',padding:8}}>Delete</Text></TouchableOpacity></View>}</View>}/>
       </>}
     </View>}
-    {tab==='Reports' && <View style={styles.report}><Text style={styles.metricLabel}>Recorded sales (latest 100)</Text><Text style={styles.metric}>{money(totalSales)}</Text><Text style={styles.metricLabel}>Gross profit</Text><Text style={styles.metric}>{money(totalProfit)}</Text>{isAdmin&&<><Text style={styles.metricLabel}>Expenses (latest 100)</Text><Text style={styles.metric}>{money(totalExpenses)}</Text><Text style={styles.metricLabel}>Profit after listed expenses</Text><Text style={styles.metric}>{money(totalProfit-totalExpenses)}</Text></>}</View>}
-    {tab==='Expenses'&&isAdmin&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Expense description" value={expenseText} onChangeText={setExpenseText}/><TextInput style={styles.input} placeholder="Amount (PHP)" keyboardType="decimal-pad" value={expenseAmount} onChangeText={setExpenseAmount}/><TouchableOpacity style={styles.primary} onPress={addExpense}><Text style={styles.primaryText}>Save expense</Text></TouchableOpacity><FlatList data={expenses} keyExtractor={x=>x.id} renderItem={({item})=><View style={styles.line}><Text style={styles.flex}>{item.description}</Text><Text>{money(item.amount)}</Text></View>}/></View>}
+    {tab==='Reports' && hasPermission('reports','view') && <View style={styles.report}><Text style={styles.metricLabel}>Recorded sales (latest 100)</Text><Text style={styles.metric}>{money(totalSales)}</Text><Text style={styles.metricLabel}>Gross profit</Text><Text style={styles.metric}>{money(totalProfit)}</Text>{isAdmin&&<><Text style={styles.metricLabel}>Expenses (latest 100)</Text><Text style={styles.metric}>{money(totalExpenses)}</Text><Text style={styles.metricLabel}>Profit after listed expenses</Text><Text style={styles.metric}>{money(totalProfit-totalExpenses)}</Text></>}</View>}
+    {tab==='Expenses'&&hasPermission('expenses','view')&&<View style={styles.flex}><TextInput style={styles.input} placeholder="Expense description" value={expenseText} onChangeText={setExpenseText}/><TextInput style={styles.input} placeholder="Amount (PHP)" keyboardType="decimal-pad" value={expenseAmount} onChangeText={setExpenseAmount}/><TouchableOpacity style={styles.primary} onPress={addExpense}><Text style={styles.primaryText}>Save expense</Text></TouchableOpacity><FlatList data={expenses} keyExtractor={x=>x.id} renderItem={({item})=><View style={styles.line}><Text style={styles.flex}>{item.description}</Text><Text>{money(item.amount)}</Text></View>}/></View>}
     <Modal visible={ownPasswordModal} animationType="slide" onRequestClose={()=>setOwnPasswordModal(false)}><SafeAreaView style={styles.modal}><ScrollView>
       <Text style={styles.heading}>Change password</Text>
       <Text style={styles.label}>Current password</Text><TextInput style={styles.input} secureTextEntry value={currentPassword} onChangeText={setCurrentPassword} placeholder="Current password"/>
