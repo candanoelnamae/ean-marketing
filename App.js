@@ -34,7 +34,7 @@ function invoicePrintHtml(invoice, lines, payment) {
 }
 
 
-export default function App() {
+function AppContent() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1299,3 +1299,37 @@ export default function App() {
 
 const styles = StyleSheet.create({
   page:{flex:1,backgroundColor:'#f7f8fa',padding:14}, compactPage:{padding:8}, compactSearchInput:{backgroundColor:'#fff',borderWidth:1,borderColor:'#dce1e8',borderRadius:8,paddingHorizontal:10,paddingVertical:8,marginTop:0,marginBottom:6,minHeight:40}, compactAddButton:{backgroundColor:'#2457c5',paddingVertical:9,paddingHorizontal:12,borderRadius:8,alignItems:'center',marginTop:0,marginBottom:6}, compactList:{paddingBottom:8}, compactProduct:{backgroundColor:'#fff',padding:6,marginVertical:2,borderRadius:8,flexDirection:'row',alignItems:'center',gap:9}, compactThumb:{width:52,height:52,borderRadius:7,backgroundColor:'#e7eaf0'}, compactThumbPlaceholder:{width:52,height:52,borderRadius:7,backgroundColor:'#e7eaf0',alignItems:'center',justifyContent:'center'}, compactProductName:{fontWeight:'700',fontSize:14,color:'#1e293b'}, compactNote:{color:'#687386',fontSize:12,marginTop:2}, compactPrice:{fontWeight:'700',fontSize:14,color:'#2457c5',marginTop:2}, compactResult:{backgroundColor:'#fff',paddingHorizontal:9,paddingVertical:7,borderRadius:8,marginVertical:2,flexDirection:'row',alignItems:'center',gap:8}, homeLink:{paddingVertical:2,marginBottom:2}, compactHeader:{marginBottom:6}, dashboard:{flex:1,flexDirection:'row',flexWrap:'wrap',justifyContent:'space-between',alignContent:'flex-start',paddingTop:10,paddingBottom:12}, featureTile:{width:'31.5%',minHeight:88,backgroundColor:'#fff',borderRadius:14,marginBottom:9,alignItems:'center',justifyContent:'center',paddingHorizontal:6,paddingVertical:8,borderWidth:1,borderColor:'#e3e7ee',elevation:1}, featureIcon:{fontSize:38,color:'#2457c5',fontWeight:'700'}, featureName:{fontSize:12.5,fontWeight:'700',color:'#1e293b',textAlign:'center'}, center:{flex:1,justifyContent:'center',alignItems:'center',padding:24,backgroundColor:'#f7f8fa'}, flex:{flex:1}, header:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:16}, heading:{fontSize:25,fontWeight:'800',color:'#14213d'}, sub:{color:'#657080',marginTop:3}, tabs:{flexDirection:'row',marginBottom:14,borderBottomWidth:1,borderColor:'#dce1e8'}, tab:{paddingVertical:10,paddingHorizontal:12}, selectedLine:{borderWidth:1,borderColor:'#2457c5'}, activeTab:{borderBottomWidth:3,borderColor:'#2457c5'}, tabText:{color:'#687386'},activeTabText:{color:'#2457c5',fontWeight:'700'}, input:{backgroundColor:'#fff',borderWidth:1,borderColor:'#dce1e8',borderRadius:9,padding:11,marginVertical:4},primary:{backgroundColor:'#2457c5',padding:13,borderRadius:9,alignItems:'center',marginVertical:7},primaryText:{color:'#fff',fontWeight:'700'},secondary:{padding:13,borderRadius:9,borderWidth:1,borderColor:'#cbd2dc',alignItems:'center',marginVertical:7},link:{color:'#2457c5',fontWeight:'600',padding:8},note:{color:'#687386',fontSize:13,marginTop:4},product:{backgroundColor:'#fff',padding:8,marginVertical:2,borderRadius:10,flexDirection:'row',alignItems:'center',gap:12},thumb:{width:64,height:64,borderRadius:8,backgroundColor:'#e7eaf0'},thumbPlaceholder:{width:64,height:64,borderRadius:8,backgroundColor:'#e7eaf0',alignItems:'center',justifyContent:'center'},productName:{fontWeight:'700',fontSize:16,color:'#1e293b'},price:{fontWeight:'700',color:'#2457c5',marginTop:5},line:{backgroundColor:'#fff',padding:10,borderRadius:9,marginVertical:2,flexDirection:'row',alignItems:'center',gap:12},report:{backgroundColor:'#fff',padding:20,borderRadius:12},metricLabel:{color:'#687386',marginTop:12},metric:{fontSize:23,fontWeight:'800',color:'#14213d'},modal:{flex:1,padding:18,backgroundColor:'#f7f8fa'},invoiceTotals:{backgroundColor:'#fff',padding:14,borderRadius:10,marginTop:14},invoiceTotalRow:{flexDirection:'row',justifyContent:'space-between',paddingVertical:7},invoiceGrandLabel:{fontWeight:'800',fontSize:17,color:'#14213d'},signatureRow:{flexDirection:'row',gap:16,marginTop:34},signatureCell:{flex:1,alignItems:'center'},signatureLine:{height:1,backgroundColor:'#344054',alignSelf:'stretch',marginBottom:8,marginTop:20},signatureName:{fontWeight:'700',textAlign:'center',color:'#14213d'},invoiceDate:{textAlign:'center',marginTop:20,color:'#344054',fontWeight:'600'},hero:{width:'100%',height:230,borderRadius:12,marginBottom:16},label:{fontWeight:'700',marginTop:14},body:{marginVertical:12,color:'#344054'},});
+
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error) {
+    console.error('EAN Marketing screen error:', error);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <SafeAreaView style={styles.center}>
+          <StatusBar style="dark" />
+          <Text style={styles.heading}>EAN Marketing screen error</Text>
+          <Text style={styles.note}>Please send this message to support:</Text>
+          <Text selectable style={styles.note}>{String(this.state.error?.message || this.state.error)}</Text>
+        </SafeAreaView>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function App() {
+  return (
+    <AppErrorBoundary>
+      <AppContent />
+    </AppErrorBoundary>
+  );
+}
