@@ -122,6 +122,25 @@ Deno.serve(async (req) => {
         if (!name || name.length > 120) return json({ error: "Enter a valid full name." }, 400);
         updates.full_name = name;
       }
+      if (typeof body.username === "string") {
+        const username = body.username.trim().toLowerCase();
+        if (!/^[a-zA-Z0-9._-]{1,30}$/.test(username)) return json({ error: "Username must be 1–30 letters, numbers, dots, underscores, or hyphens." }, 400);
+        const { data: existing, error: existingError } = await admin
+          .from("profiles")
+          .select("id")
+          .ilike("username", username)
+          .neq("id", userId)
+          .maybeSingle();
+        if (existingError) throw existingError;
+        if (existing) return json({ error: "That username is already in use." }, 409);
+        const { error: emailError } = await admin.auth.admin.updateUserById(userId, {
+          email: username + "@users.eanmarketing.invalid",
+          email_confirm: true,
+          user_metadata: { username },
+        });
+        if (emailError) throw emailError;
+        updates.username = username;
+      }
       if (body.role === "ADMIN" || body.role === "USER") updates.role = body.role;
       if (Object.keys(updates).length === 0) return json({ error: "No valid changes supplied." }, 400);
 
