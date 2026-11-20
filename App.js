@@ -1208,7 +1208,7 @@ export default function App() {
       <Text style={styles.label}>Role</Text>
       {['USER','ADMIN'].map(role=><TouchableOpacity key={role} style={[styles.secondary,{borderColor:adminUserForm.role===role?'#2457c5':'#cbd2dc'}]} onPress={()=>setAdminUserForm(old=>({...old,role}))}><Text>{adminUserForm.role===role?'✓ ':''}{role}</Text></TouchableOpacity>)}
       <Text style={styles.label}>{editingAdminUser?'New password (leave blank to keep current password)':'Default password'}</Text>
-      <TextInput style={styles.input} secureTextEntry value={adminUserForm.password} onChangeText={v=>setAdminUserForm(old=>({...old,password:v}))} placeholder="At least 6 characters"/>
+      <TextInput style={styles.input} secureTextEntry value={adminUserForm.password} onChangeText={v=>setAdminUserForm(old=>({...old,password:v}))} placeholder="At least 8 characters"/>
       {editingAdminUser?<Text style={styles.note}>If you enter a new password, the user will be required to change it at next login.</Text>:<Text style={styles.note}>New users will be required to change this temporary password at next login.</Text>}
       <TouchableOpacity style={styles.primary} onPress={saveAdminUser}><Text style={styles.primaryText}>Save user</Text></TouchableOpacity>
       <TouchableOpacity style={styles.secondary} onPress={()=>setAdminUserModal(false)}><Text>Cancel</Text></TouchableOpacity>
