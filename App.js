@@ -959,7 +959,7 @@ export default function App() {
     if (!online) {
       const record = editingCustomer
         ? {...editingCustomer, ...payload}
-        : {...payload, id:makeLocalId(), created_by:session.user.id};
+        : {...payload, id:makeLocalId(), created_by:session.user.id, created_by_name:profile?.full_name || ''};
       await addPendingOperation(session.user.id, {
         type:'upsert', table:'customers', recordId:record.id,
         payload:{record, baseRecord:editingCustomer || null}
@@ -1186,7 +1186,7 @@ export default function App() {
       </> : <>
         <TextInput style={styles.input} placeholder="Search customer name, phone, email…" value={customerSearch} onChangeText={setCustomerSearch}/>
         <TouchableOpacity style={styles.primary} onPress={newCustomer}><Text style={styles.primaryText}>+ Add customer</Text></TouchableOpacity>
-        <FlatList data={customers.filter(x=>[x.name,x.phone,x.email].join(' ').toLowerCase().includes(customerSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No customers yet.</Text>} renderItem={({item})=><View style={styles.line}><TouchableOpacity style={styles.flex} onPress={()=>setSelectedCustomerHistory(item)}><Text style={styles.productName}>{item.name}</Text><Text style={styles.note}>{item.phone || 'No phone'} {item.email ? '· '+item.email : ''}</Text>{item.address ? <Text style={styles.note}>{item.address}</Text> : null}<Text style={styles.link}>View transaction history</Text></TouchableOpacity>{isAdmin&&<View><TouchableOpacity onPress={()=>editCustomer(item)}><Text style={styles.link}>Edit</Text></TouchableOpacity><TouchableOpacity onPress={()=>deleteCustomer(item)}><Text style={{color:'#c62828',padding:8}}>Delete</Text></TouchableOpacity></View>}</View>}/>
+        <FlatList data={customers.filter(x=>[x.name,x.phone,x.email].join(' ').toLowerCase().includes(customerSearch.toLowerCase()))} keyExtractor={x=>x.id} onRefresh={refresh} refreshing={false} ListEmptyComponent={<Text style={styles.note}>No customers yet.</Text>} renderItem={({item})=><View style={styles.line}><TouchableOpacity style={styles.flex} onPress={()=>setSelectedCustomerHistory(item)}><Text style={styles.productName}>{item.name}</Text><Text style={styles.note}>{item.phone || 'No phone'} {item.email ? '· '+item.email : ''}</Text><Text style={styles.note}>Added by: {item.created_by_name || 'Unknown'}</Text>{item.address ? <Text style={styles.note}>{item.address}</Text> : null}<Text style={styles.link}>View transaction history</Text></TouchableOpacity>{isAdmin&&<View><TouchableOpacity onPress={()=>editCustomer(item)}><Text style={styles.link}>Edit</Text></TouchableOpacity><TouchableOpacity onPress={()=>deleteCustomer(item)}><Text style={{color:'#c62828',padding:8}}>Delete</Text></TouchableOpacity></View>}</View>}/>
       </>}
     </View>}
     {tab==='Reports' && hasPermission('reports','view') && <View style={styles.report}><Text style={styles.metricLabel}>Recorded sales (latest 100)</Text><Text style={styles.metric}>{money(totalSales)}</Text><Text style={styles.metricLabel}>Gross profit</Text><Text style={styles.metric}>{money(totalProfit)}</Text>{isAdmin&&<><Text style={styles.metricLabel}>Expenses (latest 100)</Text><Text style={styles.metric}>{money(totalExpenses)}</Text><Text style={styles.metricLabel}>Profit after listed expenses</Text><Text style={styles.metric}>{money(totalProfit-totalExpenses)}</Text></>}</View>}
