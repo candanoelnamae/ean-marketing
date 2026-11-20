@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, AppState, Alert, FlatList, Image, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, AppState, Alert, FlatList, Image, Modal, SafeAreaView, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
@@ -108,6 +108,8 @@ export default function App() {
   const [bookingDetail, setBookingDetail] = useState(null);
   const [bookingDetailItems, setBookingDetailItems] = useState([]);
   const [adminUsers, setAdminUsers] = useState([]);
+  const [rolePermissions, setRolePermissions] = useState([]);
+  const [permissionsLoading, setPermissionsLoading] = useState(false);
   const [adminUserModal, setAdminUserModal] = useState(false);
   const [editingAdminUser, setEditingAdminUser] = useState(null);
   const [adminUserForm, setAdminUserForm] = useState({full_name:'', username:'', role:'USER', password:''});
@@ -974,6 +976,30 @@ export default function App() {
     if (data?.error) throw new Error(data.error);
     return data;
   }
+  const permissionModules = [
+    ['products','Products'],['sales','Sales'],['bookings','Booking / Orders'],
+    ['booking_search','Booking Search'],['customers','Customers'],['billing','Billing'],
+    ['vendors','Vendors'],['expenses','Expenses'],['reports','Reports'],['settings','Settings']
+  ];
+  async function loadRolePermissions() {
+    setPermissionsLoading(true);
+    const {data, error} = await supabase.from('role_permissions').select('*').order('module');
+    setPermissionsLoading(false);
+    if (error) return Alert.alert('Permissions', error.message);
+    setRolePermissions(data || []);
+  }
+  async function changeRolePermission(role, module, field, value) {
+    const previous = rolePermissions;
+    const updated = previous.map(row => row.role === role && row.module === module ? {...row, [field]:value} : row);
+    setRolePermissions(updated);
+    const {error} = await supabase.from('role_permissions').upsert({
+      role, module, [field]:value, updated_by:session?.user?.id
+    }, {onConflict:'role,module'});
+    if (error) {
+      setRolePermissions(previous);
+      Alert.alert('Could not save permission', error.message);
+    }
+  }
   async function loadAdminUsers() {
     try {
       const result = await adminUserAction({action:'list'});
@@ -1076,6 +1102,25 @@ export default function App() {
       </TouchableOpacity>}/>
     </View>}
     {tab==='Settings'&&isAdmin&&<View style={styles.flex}>
+      <Text style={styles.productName}>Role permissions</Text>
+      <Text style={styles.note}>Choose what each role can view, add, edit, and delete. Changes are saved immediately.</Text>
+      <TouchableOpacity style={styles.secondary} onPress={loadRolePermissions}><Text>{permissionsLoading?'Loading…':'Refresh permissions'}</Text></TouchableOpacity>
+      {rolePermissions.length===0 ? <Text style={styles.note}>Tap Refresh permissions to load the permission matrix.</Text> : permissionModules.map(([module,label])=><View key={module} style={[styles.line,{alignItems:'flex-start'}]}>
+        <View style={styles.flex}>
+          <Text style={styles.productName}>{label}</Text>
+          {['ADMIN','USER'].map(role=>{
+            const row=rolePermissions.find(x=>x.role===role&&x.module===module);
+            return <View key={role} style={{marginTop:8}}>
+              <Text style={styles.note}>{role}</Text>
+              {['can_view','can_add','can_edit','can_delete'].map(field=><View key={field} style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingVertical:2}}>
+                <Text style={styles.note}>{field.replace('can_','').replace(/^./,c=>c.toUpperCase())}</Text>
+                <Switch value={Boolean(row?.[field])} onValueChange={value=>changeRolePermission(role,module,field,value)} disabled={!row}/>
+              </View>)}
+            </View>;
+          })}
+        </View>
+      </View>)}
+      <View style={{height:16}}/>
       <Text style={styles.productName}>User Management</Text>
       <Text style={styles.note}>Add users, change roles, edit account details, reset passwords, or delete accounts.</Text>
       <TouchableOpacity style={styles.primary} onPress={()=>openAdminUser()}><Text style={styles.primaryText}>+ Add user</Text></TouchableOpacity>
