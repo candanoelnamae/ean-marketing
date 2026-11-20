@@ -1,5 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import * as Network from 'expo-network';
+import * as SecureStore from 'expo-secure-store';
 
 let databasePromise;
 
@@ -104,17 +105,30 @@ export function subscribeToNetworkChanges(callback) {
 }
 
 
+const secureAuthKey = key => `supabase-auth-${key}`;
+
 export const supabaseAuthStorage = {
   async getItem(key) {
+    const secureKey = secureAuthKey(key);
+    const savedValue = await SecureStore.getItemAsync(secureKey);
+    if (savedValue !== null) return savedValue;
+
+    // One-time migration for sessions saved by older app versions.
     const db = await database();
     const row = await db.getFirstAsync('SELECT value FROM auth_storage WHERE key = ?', key);
-    return row?.value ?? null;
+    if (!row?.value) return null;
+
+    await SecureStore.setItemAsync(secureKey, row.value);
+    await db.runAsync('DELETE FROM auth_storage WHERE key = ?', key);
+    return row.value;
   },
   async setItem(key, value) {
+    await SecureStore.setItemAsync(secureAuthKey(key), value);
     const db = await database();
-    await db.runAsync('INSERT OR REPLACE INTO auth_storage (key, value) VALUES (?, ?)', key, value);
+    await db.runAsync('DELETE FROM auth_storage WHERE key = ?', key);
   },
   async removeItem(key) {
+    await SecureStore.deleteItemAsync(secureAuthKey(key));
     const db = await database();
     await db.runAsync('DELETE FROM auth_storage WHERE key = ?', key);
   }
