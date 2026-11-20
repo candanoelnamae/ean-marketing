@@ -1222,7 +1222,7 @@ export default function App() {
         <View style={{flex:1}}>
           <Text style={styles.label}>Prepared by: {invoiceDetail.created_by_name || "Unknown"}</Text>
           <Text style={styles.note}>Invoice date: {invoiceDetail?.created_at ? new Date(invoiceDetail.created_at).toLocaleDateString() : ''}</Text>
-          {invoiceDetail?.confirmed_at ? <Text style={{color:'#16723a',fontWeight:'700',marginTop:8}}>CONFIRMED</Text> : null}
+          {invoiceDetail?.confirmed_at ? <><Text style={{color:'#16723a',fontWeight:'700',marginTop:8}}>CONFIRMED</Text><Text style={styles.note}>Confirmed by: {invoiceDetail.confirmed_by_name || 'Unknown'}</Text></> : null}
         </View>
         <View style={{width:'52%',maxWidth:300,alignItems:'stretch'}}>
           <Text style={styles.label}>Customer e-signature</Text>
