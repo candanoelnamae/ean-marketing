@@ -70,9 +70,11 @@ export function subscribeToNetworkChanges(callback) {
   const update = () => callback(navigator.onLine !== false);
   window.addEventListener('online', update);
   window.addEventListener('offline', update);
-  return () => {
-    window.removeEventListener('online', update);
-    window.removeEventListener('offline', update);
+  return {
+    remove() {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    }
   };
 }
 
