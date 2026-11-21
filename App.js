@@ -1303,13 +1303,14 @@ const styles = StyleSheet.create({
 class AppErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { error: null };
+    this.state = { error: null, componentStack: '' };
   }
   static getDerivedStateFromError(error) {
     return { error };
   }
-  componentDidCatch(error) {
-    console.error('EAN Marketing screen error:', error);
+  componentDidCatch(error, info) {
+    console.error('EAN Marketing screen error:', error, info?.componentStack);
+    this.setState({ componentStack: info?.componentStack || '' });
   }
   render() {
     if (this.state.error) {
@@ -1317,8 +1318,10 @@ class AppErrorBoundary extends React.Component {
         <SafeAreaView style={styles.center}>
           <StatusBar style="dark" />
           <Text style={styles.heading}>EAN Marketing screen error</Text>
-          <Text style={styles.note}>Please send this message to support:</Text>
+          <Text style={styles.note}>Please send the full message below to support:</Text>
           <Text selectable style={styles.note}>{String(this.state.error?.message || this.state.error)}</Text>
+          {!!this.state.error?.stack && <Text selectable style={styles.note}>{this.state.error.stack}</Text>}
+          {!!this.state.componentStack && <Text selectable style={styles.note}>{this.state.componentStack}</Text>}
         </SafeAreaView>
       );
     }
